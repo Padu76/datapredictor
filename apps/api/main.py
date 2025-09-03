@@ -3,18 +3,19 @@ from fastapi.middleware.cors import CORSMiddleware
 import os, io, csv, re
 from datetime import datetime, timedelta
 from statistics import mean
+from typing import List, Tuple
 
 # Env:
 # ALLOWED_ORIGINS       -> lista separata da virgole (es. http://localhost:3000,https://datapredictor.vercel.app)
 # ALLOW_ORIGIN_REGEX    -> regex opzionale (es. ^https://.*\.vercel\.app$)
 allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS","http://localhost:3000").split(",") if o.strip()]
-allow_origin_regex = os.getenv("ALLOW_ORIGIN_REGEX", r"^https://.*\.vercel\.app$")  # default: qualsiasi subdominio vercel.app
+allow_origin_regex = os.getenv("ALLOW_ORIGIN_REGEX", r"^https://.*\.vercel\.app$")
 
-app = FastAPI(title="DataPredictor API – MVP (no pandas)")
+app = FastAPI(title="DataPredictor API – MVP (CSV/XLSX, no pandas)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=allow_origin_regex,   # <-- gestisce automaticamente preview/prod su vercel.app
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,7 +29,7 @@ DATE_CANDS = ["date","data","giorno","timestamp","order_date","created_at"]
 AMOUNT_CANDS = ["amount","revenue","ricavo","price","prezzo","total","totale","valore"]
 QTY_CANDS = ["qty","quantita","quantity","qta"]
 
-def find_col(header, candidates):
+def find_col(header: List[str], candidates: List[str]):
     low = [h.lower() for h in header]
     for c in candidates:
         if c in low:
@@ -36,58 +37,71 @@ def find_col(header, candidates):
     return None
 
 def to_float(x):
-    if x is None:
-        return 0.0
+    if x is None: return 0.0
     s = str(x).strip().replace("€","").replace(" ", "").replace(",", ".")
-    try:
-        return float(s)
-    except:
-        return 0.0
+    try: return float(s)
+    except: return 0.0
 
 def parse_date(x):
     s = str(x).strip()
     for fmt in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%m/%d/%Y","%Y/%m/%d","%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(s, fmt)
-        except:
-            pass
-    try:
-        return datetime.fromisoformat(s.replace("Z",""))
-    except:
-        return None
+        try: return datetime.strptime(s, fmt)
+        except: pass
+    try: return datetime.fromisoformat(s.replace("Z",""))
+    except: return None
+
+def read_csv(bytes_content: bytes) -> Tuple[List[str], List[dict]]:
+    text = bytes_content.decode("utf-8", errors="ignore").splitlines()
+    reader = csv.DictReader(text)
+    rows = list(reader)
+    return (reader.fieldnames or []), rows
+
+def read_xlsx(bytes_content: bytes) -> Tuple[List[str], List[dict]]:
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(bytes_content), read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows: return [], []
+    header = [str(c) if c is not None else "" for c in rows[0]]
+    out = []
+    for r in rows[1:]:
+        out.append({header[i]: r[i] for i in range(len(header))})
+    return header, out
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Per l'MVP accettiamo solo CSV.")
+    fname = file.filename.lower()
+    if not (fname.endswith(".csv") or fname.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="Accettiamo CSV o XLSX.")
+
     content = await file.read()
-    text = content.decode("utf-8", errors="ignore").splitlines()
+    if fname.endswith(".csv"):
+        header, rows = read_csv(content)
+    else:
+        header, rows = read_xlsx(content)
 
-    reader = csv.DictReader(text)
-    rows = list(reader)
     if not rows:
-        raise HTTPException(status_code=400, detail="CSV vuoto o senza header.")
+        raise HTTPException(status_code=400, detail="File vuoto o senza header.")
 
-    header = reader.fieldnames or []
-    date_col = find_col(header, DATE_CANDS) or next((c for c in header if "date" in c.lower() or "data" in c.lower() or "time" in c.lower()), None)
+    # colonne
+    date_col = find_col(header, DATE_CANDS) or next((c for c in header if c and ("date" in c.lower() or "data" in c.lower() or "time" in c.lower())), None)
     if not date_col:
         raise HTTPException(status_code=400, detail="Nessuna colonna data trovata (es. 'date').")
-
     amount_col = find_col(header, AMOUNT_CANDS)
     price_col = find_col(header, ["price","prezzo","unit_price","unitprice"])
     qty_col = find_col(header, QTY_CANDS)
 
+    # aggrega per giorno
     daily = {}
     for r in rows:
         d = parse_date(r.get(date_col))
-        if not d:  # salta righe senza data valida
-            continue
+        if not d: continue
         if amount_col:
             amt = to_float(r.get(amount_col))
         elif price_col and qty_col:
             amt = to_float(r.get(price_col)) * to_float(r.get(qty_col))
         else:
-            amt = 1.0
+            amt = 1.0  # fallback: conta come ordine
         day = datetime(d.year, d.month, d.day)
         daily[day] = daily.get(day, 0.0) + amt
 
@@ -95,11 +109,12 @@ async def analyze(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Nessuna riga valida dopo il parsing.")
 
     # completa giorni mancanti
-    start = min(daily.keys()); end = max(daily.keys())
-    curr = start; series = []
+    start, end = min(daily.keys()), max(daily.keys())
+    series = []
+    curr = start
     while curr <= end:
         series.append((curr, float(daily.get(curr, 0.0))))
-        curr += timedelta(days=1)
+        curr += datetime.timedelta(days=1) if False else timedelta(days=1)  # per linting
 
     # KPI 30gg
     last30 = [(d,v) for d,v in series if d >= (end - timedelta(days=29))]
@@ -107,7 +122,7 @@ async def analyze(file: UploadFile = File(...)):
     orders_days = sum(1 for _,v in last30 if v > 0)
     avg_ticket = (revenue_30 / orders_days) if orders_days else 0.0
 
-    # Trend 2 settimane vs precedenti 2
+    # Trend 2w vs 2w
     vals = [v for _,v in last30]
     recent = vals[-14:] if len(vals)>=14 else vals
     prev   = vals[-28:-14] if len(vals)>=28 else vals[:max(len(vals)-14,1)]
