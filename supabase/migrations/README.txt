@@ -1,0 +1,1 @@
+Migrazioni verranno aggiunte quando abilitiamo Auth/Storage.
