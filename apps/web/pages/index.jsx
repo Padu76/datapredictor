@@ -27,13 +27,17 @@ export default function Home(){
   const [period,setPeriod]=useState('30')
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
+  const [advisorLoading,setAdvisorLoading]=useState(false)
+  const [advisorData,setAdvisorData]=useState(null) // {mode, advisor_text, playbook}
+  const [whatIf,setWhatIf]=useState({ priceDelta: 0, elasticity: -1.5, cogsPct: 40 })
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
   const reportRef = useRef(null)
 
-  const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' })
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
+  const api = axios.create({ baseURL: apiBase })
 
-  // Se arrivo con ?analysisId carico l’analisi salvata
+  // Carica analisi salvata da Supabase quando si arriva con ?analysisId
   useEffect(()=>{
     const { analysisId } = router.query || {}
     if(!analysisId || !supabase) return
@@ -57,6 +61,7 @@ export default function Home(){
 
   const onAnalyze = async()=>{
     setError('')
+    setAdvisorData(null)
     const f = fileRef.current?.files?.[0] || null
     if(!f){ setError('Seleziona un file CSV/XLSX'); return }
     setLoading(true)
@@ -68,10 +73,8 @@ export default function Home(){
       if(supabase){
         await supabase.from('analyses').insert({
           created_at: new Date().toISOString(),
-          kpi: r.data.kpi,
-          forecast: r.data.forecast,
-          anomalies: r.data.anomalies,
-          actions: r.data.actions,
+          kpi: r.data.kpi, forecast: r.data.forecast,
+          anomalies: r.data.anomalies, actions: r.data.actions,
           timeseries_len: (r.data.timeseries||[]).length
         })
       }
@@ -119,26 +122,51 @@ export default function Home(){
   const kpi = rawRes?.kpi || {}
   const actions = rawRes?.actions || []
 
-  // Advisor
-  const advisor = useMemo(()=>{
-    if(!rawRes) return null
-    const tips = []
-    const trend = kpi.trend_last_2w_vs_prev_2w_pct ?? 0
-    const forecastChange = rawRes?.forecast?.change_vs_last30_pct ?? 0
-    const anomalies = rawRes?.anomalies || []
-    if(trend > 10) tips.push("Trend forte in crescita: aumenta budget su sorgenti top e scala le creatività vincenti.")
-    else if (trend < -5) tips.push("Trend in calo: rivedi offerte/pricing e attiva promo tattica 7 giorni.")
-    else tips.push("Trend stabile: consolida best seller e testa varianti di prezzo/pacchetti.")
-    if(forecastChange < 0) tips.push("Forecast sotto ultimi 30 gg: ribilancia stock e spingi prodotti ad alta conversione.")
-    else tips.push("Forecast sopra ultimi 30 gg: prepara scorte e customer care per sostenere il volume.")
-    if(anomalies.length>0) tips.push(`Rilevate anomalie in ${anomalies.length} giorni: controlla prezzi, resi, interruzioni ads.`)
-    if(view?.momPct !== null) tips.push(`MoM: ${view.momPct.toFixed(1)}%.`)
-    if(view?.yoyPct !== null) tips.push(`YoY: ${view.yoyPct.toFixed(1)}%.`)
-    const todo = actions.map(a => `• [${a.priority}] ${a.title} (uplift atteso ${a.expected_uplift_pct}%)`)
-    return {tips, todo}
-  }, [rawRes, actions, kpi, view])
+  // Advisor (chiama /advisor – LLM se disponibile, altrimenti rule-based)
+  const generateAdvisor = async()=>{
+    if(!rawRes){ setError('Esegui prima un’analisi.'); return }
+    setAdvisorLoading(true); setError('')
+    try{
+      const ctx = { period, mom_pct: view?.momPct ?? None, yoy_pct: view?.yoyPct ?? None }
+      const r = await axios.post(`${apiBase}/advisor`, { analysis: rawRes, context: ctx })
+      setAdvisorData(r.data)
+    }catch(e){
+      setError(e?.response?.data?.detail || e.message || 'Errore generazione advisor')
+    }finally{ setAdvisorLoading(false) }
+  }
 
-  // Utils: dataURL per logo
+  // What-if pricing (stima semplice)
+  const whatIfResult = useMemo(()=>{
+    if(!kpi?.revenue_30d || !kpi?.avg_ticket) return null
+    const priceDelta = Number(whatIf.priceDelta) / 100     // % variazione prezzo
+    const elasticity = Number(whatIf.elasticity)           # negative typical
+    const cogs = Number(whatIf.cogsPct) / 100
+
+    const baseRevenue = Number(kpi.revenue_30d)
+    const baseAOV = Number(kpi.avg_ticket)
+    const baseOrders = baseAOV > 0 ? baseRevenue / baseAOV : 0
+
+    // volume multiplier con elasticità: Q' = Q * (1 + e * Δp)
+    let volMult = 1 + (elasticity * priceDelta)
+    if (volMult < 0) volMult = 0
+
+    const newPriceMult = 1 + priceDelta
+    const newAOV = baseAOV * newPriceMult
+    const newOrders = baseOrders * volMult
+    const newRevenue = newAOV * newOrders
+
+    // margine: (1 - cogs) * ricavi (assunzione lineare)
+    const baseMargin = baseRevenue * (1 - cogs)
+    const newMargin = newRevenue * (1 - cogs)
+
+    return {
+      newAOV, newOrders, newRevenue, newMargin,
+      deltaRevenuePct: baseRevenue ? ((newRevenue - baseRevenue)/baseRevenue*100) : 0,
+      deltaMarginPct:  baseMargin ? ((newMargin - baseMargin)/baseMargin*100) : 0
+    }
+  }, [kpi, whatIf])
+
+  // Utils dataURL per PDF
   const fetchDataURL = async (path) => {
     const res = await fetch(path)
     const blob = await res.blob()
@@ -149,7 +177,7 @@ export default function Home(){
     })
   }
 
-  // PDF con header brand
+  // PDF brandizzato
   const exportPDF = async()=>{
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
@@ -158,24 +186,16 @@ export default function Home(){
     doc.setFillColor(BRAND.color)
     doc.rect(0, 0, pageWidth, 56, 'F')
 
-    try {
-      const logoData = await fetchDataURL(BRAND.logoPath)
-      doc.addImage(logoData, 'SVG', 18, 12, 32, 32)
-    } catch {}
+    try { const logoData = await fetchDataURL(BRAND.logoPath); doc.addImage(logoData, 'SVG', 18, 12, 32, 32) } catch {}
     doc.setTextColor('#ffffff')
-    doc.setFontSize(18)
-    doc.text(`${BRAND.name} — Report`, 60, 32)
-    doc.setFontSize(11)
-    doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
+    doc.setFontSize(18); doc.text(`${BRAND.name} — Report`, 60, 32)
+    doc.setFontSize(11); doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
 
     const canvas = await html2canvas(reportRef.current, {scale: 2})
     const imgData = canvas.toDataURL('image/png')
-    const margin = 20
-    const usable = pageWidth - margin*2
-    const ratio = usable / canvas.width
-    const imgHeight = canvas.height * ratio
+    const margin = 20, usable = pageWidth - margin*2
+    const ratio = usable / canvas.width, imgHeight = canvas.height * ratio
     doc.addImage(imgData, 'PNG', margin, 64, usable, imgHeight)
-
     doc.save('DataPredictor_Report.pdf')
   }
 
@@ -185,6 +205,7 @@ export default function Home(){
       <main className="container">
         <h1>{BRAND.name}</h1>
 
+        {/* Toolbar */}
         <section className="toolbar">
           <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>setError('')} />
           <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
@@ -202,41 +223,103 @@ export default function Home(){
         </section>
         {error && <p className="error">{error}</p>}
 
+        {/* Report area */}
         <section ref={reportRef}>
           {rawRes && (
             <>
+              {/* KPI */}
               <section className="kpis">
-                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {kpi.revenue_30d?.toLocaleString?.('it-IT') ?? kpi.revenue_30d}</div></div>
-                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{kpi.orders_days_positive_30d}</div></div>
-                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {kpi.avg_ticket?.toFixed?.(2) ?? kpi.avg_ticket}</div></div>
+                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
+                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
+                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {rawRes.kpi?.avg_ticket?.toFixed?.(2) ?? rawRes.kpi?.avg_ticket}</div></div>
                 <div className="card">
                   <div className="kpi-title">Trend 2w vs 2w</div>
-                  <div className={`kpi-value ${kpi.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{kpi.trend_last_2w_vs_prev_2w_pct}%</div>
+                  <div className={`kpi-value ${rawRes.kpi?.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{rawRes.kpi?.trend_last_2w_vs_prev_2w_pct}%</div>
                 </div>
               </section>
 
+              {/* MoM / YoY */}
               <section className="diff">
                 <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
                 <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
               </section>
 
+              {/* Chart */}
               <section className="chart-wrap">
                 <h3>Ricavi giornalieri</h3>
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
+              {/* Advisor Pro */}
               <section className="advisor">
-                <h3>Advisor</h3>
-                <ul>{(advisor?.tips||[]).map((t,i)=><li key={i}>{t}</li>)}</ul>
-                <h4>To-do operativo</h4>
-                <pre className="box">{(advisor?.todo||[]).join('\n')}</pre>
+                <h3>Advisor Pro</h3>
+                <button onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>{advisorLoading ? 'Generazione...' : 'Genera report consulente'}</button>
+                {advisorData && (
+                  <>
+                    <pre className="box" style={{whiteSpace:'pre-wrap'}}>{advisorData.advisor_text}</pre>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+                      <div className="card">
+                        <h4>Playbook 7 giorni</h4>
+                        <ul>{(advisorData.playbook?.['7d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                      <div className="card">
+                        <h4>Playbook 30 giorni</h4>
+                        <ul>{(advisorData.playbook?.['30d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                      <div className="card">
+                        <h4>Playbook 90 giorni</h4>
+                        <ul>{(advisorData.playbook?.['90d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                    </div>
+                    <p className="muted">Modalità: {advisorData.mode}</p>
+                  </>
+                )}
               </section>
 
+              {/* What-if Pricing */}
+              <section className="whatif">
+                <h3>What-if Pricing</h3>
+                <div className="grid">
+                  <div>
+                    <label>Variazione prezzo (%)</label>
+                    <input type="range" min="-20" max="20" step="1"
+                      value={whatIf.priceDelta}
+                      onChange={(e)=>setWhatIf({...whatIf, priceDelta: Number(e.target.value)})}/>
+                    <div>{whatIf.priceDelta}%</div>
+                  </div>
+                  <div>
+                    <label>Elasticità (negativa)</label>
+                    <input type="number" step="0.1" value={whatIf.elasticity}
+                      onChange={e=>setWhatIf({...whatIf, elasticity: Number(e.target.value)})}/>
+                    <div className="muted">es. -1.5: +10% prezzo ⇒ -15% volumi</div>
+                  </div>
+                  <div>
+                    <label>COGS %</label>
+                    <input type="number" step="1" value={whatIf.cogsPct}
+                      onChange={e=>setWhatIf({...whatIf, cogsPct: Number(e.target.value)})}/>
+                    <div className="muted">costo del venduto sul prezzo</div>
+                  </div>
+                </div>
+
+                {whatIfResult ? (
+                  <div className="card" style={{marginTop:12}}>
+                    <div><b>Nuovo AOV</b>: € {whatIfResult.newAOV.toFixed(2)}</div>
+                    <div><b>Ordini stimati (30gg)</b>: {Math.round(whatIfResult.newOrders)}</div>
+                    <div><b>Ricavi stimati (30gg)</b>: € {whatIfResult.newRevenue.toFixed(2)} ({whatIfResult.deltaRevenuePct.toFixed(1)}%)</div>
+                    <div><b>Margine stimato (30gg)</b>: € {whatIfResult.newMargin.toFixed(2)} ({whatIfResult.deltaMarginPct.toFixed(1)}%)</div>
+                    <div className="muted">Modello semplice: non considera vincoli di capacità, stagionalità o mix di prodotto.</div>
+                  </div>
+                ) : (
+                  <p className="muted">Carica un file per attivare il simulatore (servono AOV e Ricavi 30gg).</p>
+                )}
+              </section>
+
+              {/* Azioni dal backend */}
               <section className="actions">
                 <h3>Azioni consigliate</h3>
                 {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
                 <ol>
-                  {(actions||[]).map((a,i)=>(<li key={i}><b>{a.title}</b> — impatto atteso {a.expected_uplift_pct}% — priorità {a.priority}</li>))}
+                  {(rawRes.actions||[]).map((a,i)=>(<li key={i}><b>{a.title}</b> — impatto atteso {a.expected_uplift_pct}% — priorità {a.priority}</li>))}
                 </ol>
               </section>
             </>
@@ -270,6 +353,10 @@ export default function Home(){
         .diff { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0; color: var(--text) }
 
         .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:10px; padding:8px; background: var(--card-bg); }
+
+        .advisor h3, .whatif h3, .actions h3 { margin-top:20px }
+        .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+        .muted { color: var(--muted); }
         .box { background: var(--code-bg); color: var(--code-fg); padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
       `}</style>
     </>
