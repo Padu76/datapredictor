@@ -58,13 +58,15 @@ export default function Home(){
           actions: data.actions || [],
           timeseries: data.timeseries || null
         })
+        // scroll alla sezione analisi
+        setTimeout(()=>document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'}), 200)
       }catch(e){
         setError(e.message || 'Errore caricamento analisi salvata')
       }finally{ setLoading(false) }
     })()
   }, [router.query])
 
-  // Lettura locale header per il wizard (CSV/XLSX)
+  // Lettura locale header per wizard (CSV/XLSX)
   const readHeaders = async (file)=>{
     const name = file.name.toLowerCase()
     if(name.endsWith('.csv')){
@@ -84,13 +86,11 @@ export default function Home(){
     }
   }
 
-  // Apre wizard mappatura
   const openMapping = async()=>{
     setError('')
     const f = fileRef.current?.files?.[0] || null
     if(!f){ setError('Seleziona prima un file'); return }
     await readHeaders(f)
-    // prova auto-suggest minima
     const lower = (h)=>h?.toLowerCase?.()||''
     const suggest = (keys)=>headers.find(h=>keys.some(k=>lower(h)===k)) || ''
     setMapping(m=>({
@@ -108,11 +108,12 @@ export default function Home(){
     setAdvisorData(null)
     const f = fileRef.current?.files?.[0] || null
     if(!f){ setError('Seleziona un file CSV/XLSX'); return }
+    // scroll alla sezione analisi dopo click
+    document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'})
     setLoading(true)
     try{
       const form=new FormData()
       form.append('file', f)
-      // se l'utente ha aperto il wizard e impostato almeno la data, passiamo mapping
       const hasMapping = mapping?.date || mapping?.amount || (mapping?.price && mapping?.qty)
       if(hasMapping){
         form.append('mapping', JSON.stringify(mapping))
@@ -210,11 +211,107 @@ export default function Home(){
     doc.save('DataPredictor_Report.pdf')
   }
 
+  // UI helpers
+  const scrollToAnalyze = ()=> document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'})
+  const scrollToHow = ()=> document.getElementById('how')?.scrollIntoView({behavior:'smooth'})
+
   return (
     <>
       <Head><title>{BRAND.name}</title></Head>
-      <main className="container">
-        <h1>{BRAND.name}</h1>
+
+      {/* HERO */}
+      <section className="hero">
+        <div className="hero-inner">
+          <div className="hero-tag">AI Data Advisor</div>
+          <h1>Trasforma file <span className="grad">CSV/XLSX</span> in insight e piani d’azione.</h1>
+          <p className="hero-sub">
+            Carichi i dati, <b>DataPredictor</b> li legge come un consulente:
+            KPI chiave, forecast, anomalie e un <b>report discorsivo</b> con to-do operativi a 7/30/90 giorni.
+          </p>
+          <div className="hero-cta">
+            <button onClick={scrollToAnalyze}>Prova subito</button>
+            <button className="btn-outline" onClick={scrollToHow}>Scopri come funziona</button>
+          </div>
+          <div className="hero-badges">
+            <span>• Upload CSV/XLSX</span>
+            <span>• Advisor AI</span>
+            <span>• Export PDF brandizzato</span>
+            <span>• Salvataggio analisi</span>
+          </div>
+        </div>
+      </section>
+
+      {/* FEATURES */}
+      <section className="section">
+        <div className="container">
+          <h2>Cosa può fare l’app</h2>
+          <div className="grid3">
+            <div className="feature">
+              <div className="icn">📈</div>
+              <h3>KPI & Trend</h3>
+              <p>Ricavi 30gg, ticket medio, andamento 2w vs 2w, MoM/YoY e grafico giornaliero pulito.</p>
+            </div>
+            <div className="feature">
+              <div className="icn">🧠</div>
+              <h3>Advisor AI</h3>
+              <p>Report di 25–30 righe: lettura dati, cause probabili, rischi e azioni prioritarie.</p>
+            </div>
+            <div className="feature">
+              <div className="icn">🧪</div>
+              <h3>What-if Pricing</h3>
+              <p>Simula l’impatto di prezzo, elasticità e COGS su ricavi e margini in 30 giorni.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS */}
+      <section className="section alt" id="how">
+        <div className="container">
+          <h2>Come funziona</h2>
+          <ol className="steps">
+            <li><b>1.</b> Carica un file (.csv o .xlsx)</li>
+            <li><b>2.</b> (Opzionale) <i>Mappa le colonne</i> (Data, Amount o Prezzo×Qty)</li>
+            <li><b>3.</b> Premi <i>Analizza</i>: KPI, forecast e anomalie in pochi secondi</li>
+            <li><b>4.</b> Genera il <i>Report consulente</i> + Playbook 7/30/90</li>
+            <li><b>5.</b> Esporta il <i>PDF brandizzato</i> e condividi</li>
+          </ol>
+        </div>
+      </section>
+
+      {/* FORMATS */}
+      <section className="section">
+        <div className="container">
+          <h2>Formati supportati</h2>
+          <div className="grid3">
+            <div className="card small">
+              <h4>CSV</h4>
+              <p>Separatore virgola o punto-e-virgola. Decimale virgola o punto.</p>
+            </div>
+            <div className="card small">
+              <h4>XLSX</h4>
+              <p>Prima riga = intestazioni. Prima sheet analizzata.</p>
+            </div>
+            <div className="card small">
+              <h4>Colonne minime</h4>
+              <p><b>Data</b> e <b>Amount</b> — oppure <b>Prezzo</b> + <b>Quantità</b>.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* PRIVACY */}
+      <section className="section alt">
+        <div className="container">
+          <h2>Privacy & controllo</h2>
+          <p>I file vengono processati per estrarre KPI e serie giornaliere. Puoi scegliere di non conservarli; salviamo solo le analisi per lo storico. In qualsiasi momento puoi richiedere la rimozione.</p>
+        </div>
+      </section>
+
+      {/* ANALYZE SECTION */}
+      <main className="container" id="analyze" style={{paddingTop:24}}>
+        <h2>Analizza ora</h2>
+        <p className="muted" style={{marginTop:-6}}>Carica un file, opzionalmente mappa le colonne e ottieni subito KPI, grafico e advisor.</p>
 
         <section className="toolbar">
           <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>{ setError(''); setHeaders([]); }} />
@@ -289,7 +386,7 @@ export default function Home(){
                     </div>
                   </div>
                   <p className="muted" style={{marginTop:8}}>
-                    Minimo richiesto: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>). Se non mappi Amount e neanche Prezzo×Qty, conteremo 1 per ordine.
+                    Minimo richiesto: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>).
                   </p>
                 </>
               )}
@@ -364,32 +461,58 @@ export default function Home(){
       </main>
 
       <style jsx>{`
-        .container { padding:24px; max-width:1000px; margin:0 auto; font-family:system-ui,-apple-system,Segoe UI,Roboto }
-        h1 { margin: 12px 0 8px }
-        .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px }
+        /* HERO */
+        .hero{background:linear-gradient(180deg, rgba(14,165,233,.12), transparent), radial-gradient(600px 300px at 10% -10%, rgba(14,165,233,.25), transparent), radial-gradient(600px 300px at 90% -20%, rgba(14,165,233,.18), transparent)}
+        .hero-inner{max-width:1000px;margin:0 auto;padding:64px 24px 32px;text-align:center}
+        .hero-tag{display:inline-block;padding:6px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted);background:var(--card-bg)}
+        .hero h1{font-size:36px;line-height:1.15;margin:14px 0 8px}
+        .grad{background:linear-gradient(90deg, #38bdf8, #0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .hero-sub{max-width:820px;margin:0 auto;color:var(--muted);font-size:18px}
+        .hero-cta{display:flex;gap:12px;justify-content:center;margin-top:16px}
+        .hero-badges{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:12px;color:var(--muted);font-size:14px}
+
+        /* SECTIONS */
+        .section{padding:40px 24px}
+        .section.alt{background:var(--card-bg)}
+        .container{max-width:1000px;margin:0 auto}
+        h2{margin:0 0 12px}
+        .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+        .feature{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px}
+        .icn{font-size:22px}
+        .steps{margin:0;padding-left:18px;color:var(--text)}
+
+        /* ANALYZE */
+        .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:12px 0 6px }
         .period { margin-left:16px; display:flex; gap:8px; align-items:center }
-        button { margin-left:12px; padding:8px 14px; background: var(--brand); color:#fff; border:0; border-radius:6px; cursor:pointer }
+        button { margin-left:0; padding:10px 16px; background: var(--brand); color:#fff; border:0; border-radius:8px; cursor:pointer; font-weight:600 }
+        .btn-outline { background:transparent; border:1px solid var(--border); color: var(--text); border-radius:8px; padding:10px 16px; cursor:pointer }
         .link { margin-left:16px; color: var(--brand); text-decoration:none }
         .error { color: var(--error); margin-top:8px; }
 
         .kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin: 16px 0; }
-        .card { padding:14px; border:1px solid var(--border); border-radius:10px; background: var(--card-bg); }
+        .card { padding:14px; border:1px solid var(--border); border-radius:12px; background: var(--card-bg); }
+        .card.small{padding:14px}
         .kpi-title { color: var(--muted); font-size:13px; }
-        .kpi-value { font-size:20px; font-weight:600; margin-top:6px; }
+        .kpi-value { font-size:20px; font-weight:700; margin-top:6px; }
         .kpi-value.pos { color:#059669; } .kpi-value.neg { color:#dc2626; }
 
         .diff { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0; color: var(--text) }
-        .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:10px; padding:8px; background: var(--card-bg); }
-        .box { background: var(--code-bg); color: var(--code-fg); padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
+        .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:12px; padding:8px; background: var(--card-bg); }
 
         /* Modal */
         .modal{position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50}
         .modal-card{ background: var(--bg); color: var(--text); border:1px solid var(--border); border-radius:12px; padding:16px; width:680px; max-width:100% }
         .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         label{display:block; font-size:13px; color:var(--muted); margin-bottom:4px}
-        select, input[type="number"], input[type="text"]{ width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text) }
-        .btn-outline{ background:transparent; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:8px 12px; cursor:pointer }
-        .muted{ color: var(--muted); }
+        select, input[type="number"], input[type="text"]{ width:100%; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text) }
+
+        @media (max-width: 900px){
+          .grid3{ grid-template-columns:1fr; }
+          .kpis{ grid-template-columns:1fr 1fr; }
+        }
+        @media (max-width: 600px){
+          .kpis{ grid-template-columns:1fr; }
+        }
       `}</style>
     </>
   )
