@@ -20,12 +20,13 @@ function formatDateTime(iso) {
 export default function AnalysisPage() {
   const router = useRouter();
   const { id, analysisId } = router.query;
-  const recordId = id || analysisId;
+  const recordId = (id || analysisId || "").toString();
 
   const [row, setRow] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
+  // carica record da Supabase
   useEffect(() => {
     if (!recordId) return;
     let cancelled = false;
@@ -36,7 +37,7 @@ export default function AnalysisPage() {
       try {
         const { data, error } = await supabase
           .from("analyses")
-          .select("id, created_at, name, kpi, advisor_text, report")
+          .select("id, created_at, name, kpi, advisor_text, report, playbook, actions")
           .eq("id", recordId)
           .single();
         if (error) throw error;
@@ -48,12 +49,16 @@ export default function AnalysisPage() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [recordId]);
 
-  const title = useMemo(() => row?.name || "Analisi", [row]);
-  const kpi   = useMemo(() => row?.kpi || {}, [row]);
-  const text  = useMemo(() => (row?.advisor_text || row?.report || ""), [row]);
+  const title    = useMemo(() => row?.name || "Analisi", [row]);
+  const kpi      = useMemo(() => row?.kpi || {}, [row]);
+  const advisor  = useMemo(() => (row?.advisor_text || row?.report || ""), [row]);
+  const playbook = useMemo(() => row?.playbook, [row]);
+  const actions  = useMemo(() => row?.actions, [row]);
 
   return (
     <>
@@ -80,31 +85,32 @@ export default function AnalysisPage() {
           </div>
         </header>
 
+        {/* Contenuto */}
         <div className="max-w-6xl mx-auto px-4 py-8">
-          {/* Meta analisi */}
+          {/* Meta / stato */}
           <div className="bg-white rounded-2xl shadow p-4 mb-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <div className="text-sm text-gray-500">ID</div>
               <div className="font-mono text-sm">{recordId || "—"}</div>
               <div className="text-sm text-gray-500 ml-4">Creato</div>
               <div className="text-sm">{row ? formatDateTime(row.created_at) : "—"}</div>
             </div>
-            <div className="text-sm text-gray-500">
-              {loading ? "Carico…" : err ? <span className="text-red-600">{err}</span> : "Pronto"}
+            <div className="text-sm">
+              {loading ? <span className="text-gray-500">Carico…</span> : err ? <span className="text-red-600">{err}</span> : <span className="text-green-600">Pronto</span>}
             </div>
           </div>
 
-          {/* Report elegante */}
+          {/* Report consulenziale “bello” */}
           <AdvisorPanel
             loading={loading}
             kpi={kpi}
-            reportLLM={text}
-            // opzionali:
-            // playbooks={{ ... }}
-            // actions={[ ... ]}
+            reportLLM={advisor}
+            playbooks={playbook}
+            actions={actions}
           />
         </div>
       </main>
     </>
   );
 }
+
