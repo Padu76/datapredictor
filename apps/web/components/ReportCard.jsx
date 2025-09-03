@@ -36,12 +36,16 @@ export default function ReportCard({ data }) {
       >
         Panoramica Operativa
       </h2>
-      <p className="text-center text-gray-500">lettura consulenziale e azionabile</p>
+      <p className="text-center text-gray-500">
+        lettura consulenziale e azionabile
+      </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
         <div className="bg-gray-50 rounded-xl p-4 text-center">
           <div className="text-sm text-gray-500">Ricavi 30gg</div>
-          <div className="text-2xl font-bold"><Euro value={revenue_30d} /></div>
+          <div className="text-2xl font-bold">
+            <Euro value={revenue_30d} />
+          </div>
         </div>
         <div className="bg-gray-50 rounded-xl p-4 text-center">
           <div className="text-sm text-gray-500">Giorni con vendite</div>
@@ -49,7 +53,9 @@ export default function ReportCard({ data }) {
         </div>
         <div className="bg-gray-50 rounded-xl p-4 text-center">
           <div className="text-sm text-gray-500">Ticket medio</div>
-          <div className="text-2xl font-bold"><Euro value={avg_ticket} digits={2} /></div>
+          <div className="text-2xl font-bold">
+            <Euro value={avg_ticket} digits={2} />
+          </div>
         </div>
         <div className="bg-gray-50 rounded-xl p-4 text-center">
           <div className="text-sm text-gray-500">Trend 2w vs prev.</div>
@@ -63,16 +69,25 @@ export default function ReportCard({ data }) {
         <h3 className="text-xl font-semibold mb-2">Lettura sintetica</h3>
         <p className="text-lg">
           Negli ultimi <strong>30 giorni</strong> hai generato{" "}
-          <strong><Euro value={revenue_30d} /></strong> su{" "}
-          <strong>{days_with_sales ?? "—"}</strong> giornate attive. Il ticket
-          medio è <strong><Euro value={avg_ticket} digits={2} /></strong>. Il
-          trend a 2 settimane è{" "}
+          <strong>
+            <Euro value={revenue_30d} />
+          </strong>{" "}
+          su <strong>{days_with_sales ?? "—"}</strong> giornate attive. Il
+          ticket medio è{" "}
+          <strong>
+            <Euro value={avg_ticket} digits={2} />
+          </strong>
+          . Il trend a 2 settimane è{" "}
           <strong className="text-green-600">
             <Pct value={trend_last_2w_vs_prev_2w_pct} />
           </strong>
           , indice di una dinamica in miglioramento. La proiezione a 30 giorni
-          stima <strong><Euro value={forecast_30d} /></strong>: conviene
-          preparare capacità operativa (stock, customer care, consegne).
+          stima{" "}
+          <strong>
+            <Euro value={forecast_30d} />
+          </strong>
+          : conviene preparare capacità operativa (stock, customer care,
+          consegne).
         </p>
       </div>
 
@@ -89,7 +104,7 @@ export default function ReportCard({ data }) {
         </div>
         <div className="bg-white border rounded-xl p-4">
           <h4 className="text-lg font-semibold mb-2" style={{ color: brandColor }}>
-            Rischi & Mitigazioni
+            Rischi &amp; Mitigazioni
           </h4>
           <ul className="list-disc ml-6 space-y-1">
             <li>Margini: imposta soglie minime automatiche</li>
@@ -109,7 +124,11 @@ export default function ReportCard({ data }) {
         </div>
       </div>
 
-      <div className={`${hasAnomalies ? "bg-amber-50" : "bg-green-50"} rounded-xl p-4`}>
+      <div
+        className={`${
+          hasAnomalies ? "bg-amber-50" : "bg-green-50"
+        } rounded-xl p-4`}
+      >
         <h4 className="text-lg font-semibold mb-2">
           {hasAnomalies ? "Anomalie da monitorare" : "Stato qualità dati"}
         </h4>
@@ -125,4 +144,9 @@ export default function ReportCard({ data }) {
       </div>
 
       <p className="text-center text-sm text-gray-500">
-        Nota: misura ogn
+        Nota: misura ogni esperimento e itera rapidamente. Ogni insight deve
+        portare a un test o a una decisione.
+      </p>
+    </div>
+  );
+}
