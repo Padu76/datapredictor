@@ -8,7 +8,8 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
-import AdvisorPanel from '../components/AdvisorPanel' // ⬅️ NUOVO: usa il pannello elegante
+import AdvisorPanel from '../components/AdvisorPanel'
+import CheckoutButton from '../components/CheckoutButton'   // ⬅️ AGGIUNTO
 
 const BRAND = {
   name: process.env.NEXT_PUBLIC_BRAND_NAME || 'DataPredictor',
@@ -40,7 +41,6 @@ export default function Home(){
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
   const api = axios.create({ baseURL: apiBase })
 
-  // Se arrivo con ?analysisId, carico e scrollo all'analisi
   useEffect(()=>{
     const { analysisId } = router.query || {}
     if(!analysisId || !supabase) return
@@ -62,7 +62,6 @@ export default function Home(){
     })()
   }, [router.query])
 
-  // Header from CSV/XLSX
   const readHeaders = async (file)=>{
     const name = file.name.toLowerCase()
     if(name.endsWith('.csv')){
@@ -124,7 +123,6 @@ export default function Home(){
     }finally{ setLoading(false) }
   }
 
-  // View slice + MoM/YoY
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
@@ -146,7 +144,6 @@ export default function Home(){
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Chart
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -160,7 +157,6 @@ export default function Home(){
     })
   }, [view])
 
-  // Advisor
   const generateAdvisor = async()=>{
     if(!rawRes){ setError('Esegui prima un’analisi.'); return }
     setAdvisorLoading(true); setError('')
@@ -172,7 +168,6 @@ export default function Home(){
     finally{ setAdvisorLoading(false) }
   }
 
-  // PDF brand
   const fetchDataURL = async (path) => {
     const res = await fetch(path); const blob = await res.blob()
     return await new Promise((resolve) => { const rd = new FileReader(); rd.onload=()=>resolve(rd.result); rd.readAsDataURL(blob) })
@@ -199,11 +194,8 @@ export default function Home(){
     <>
       <Head><title>{BRAND.name}</title></Head>
 
-      {/* HERO con blobs animati e CTA gradient */}
+      {/* HERO */}
       <section className="hero">
-        <div className="blob b1"></div>
-        <div className="blob b2"></div>
-        <div className="blob b3"></div>
         <div className="container hero-inner">
           <div className="card-gradient" style={{display:'inline-block'}}>
             <div className="inner" style={{padding:'6px 12px', borderRadius:12, fontWeight:700, color:'#c7d2fe'}}>AI Data Advisor</div>
@@ -213,15 +205,10 @@ export default function Home(){
             Carica i tuoi dati, <b>{BRAND.name}</b> li legge come un consulente senior:
             KPI chiave, forecast, anomalie e un <b>report di 25–30 righe</b> con to-do operativi a 7/30/90 giorni.
           </p>
-          <div className="hero-cta">
+          <div className="hero-cta" style={{ gap: 12 }}>
             <button className="cta-primary" onClick={scrollToAnalyze}>Prova subito</button>
-            <button className="cta-ghost" onClick={scrollToHow}>Scopri come funziona</button>
-          </div>
-          <div className="hero-badges">
-            <span>• Upload CSV/XLSX</span>
-            <span>• Advisor AI</span>
-            <span>• Export PDF</span>
-            <span>• Salvataggio analisi</span>
+            <Link className="cta-ghost" href="/pricing">Prezzi</Link>
+            <CheckoutButton priceId={process.env.NEXT_PUBLIC_STRIPE_PRICE_ID_PRO} /> {/* ⬅️ AGGIUNTO */}
           </div>
         </div>
       </section>
@@ -290,7 +277,7 @@ export default function Home(){
         </div>
       </section>
 
-      {/* ANALYZE (area funzionale) */}
+      {/* ANALYZE */}
       <main className="container" id="analyze" style={{paddingTop:24, paddingBottom:40}}>
         <h2>Analizza ora</h2>
         <p className="muted" style={{marginTop:-6}}>Carica un file, opzionalmente mappa le colonne e ottieni subito KPI, grafico e advisor.</p>
@@ -312,7 +299,6 @@ export default function Home(){
         </section>
         {error && <p className="error">{error}</p>}
 
-        {/* Wizard mappatura */}
         {mappingOpen && (
           <div className="modal">
             <div className="modal-card">
@@ -380,7 +366,6 @@ export default function Home(){
           </div>
         )}
 
-        {/* Report */}
         <section ref={reportRef}>
           {rawRes && (
             <>
@@ -406,14 +391,12 @@ export default function Home(){
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
-              {/* ⬇️ Sostituisce il <pre> e le tre card con il nuovo riquadro elegante */}
               <section className="advisor" style={{marginTop:16}}>
                 <h3>Advisor Pro</h3>
                 <button className="primary" onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>
                   {advisorLoading ? 'Generazione...' : 'Genera report consulente'}
                 </button>
 
-                {/* Nuovo pannello */}
                 {(advisorLoading || advisorData) && (
                   <div style={{marginTop:12}}>
                     <AdvisorPanel
