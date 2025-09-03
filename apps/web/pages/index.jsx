@@ -8,6 +8,13 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import { supabase } from '../lib/supabaseClient'
 
+const BRAND = {
+  name: 'DataPredictor',
+  color: '#0ea5e9',           // azzurro brand
+  text:  '#0b5d7b',           // testo scuro per header
+  logoPath: '/logo.svg',      // in public/
+}
+
 const PERIODS = [
   {key:'7',  label:'7 giorni'},
   {key:'30', label:'30 giorni'},
@@ -27,31 +34,27 @@ export default function Home(){
 
   const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' })
 
-  // Se arrivo con ?analysisId=... scarico l’analisi salvata da Supabase e la carico in pagina
+  // Carica analisi salvata da Supabase quando si arriva con ?analysisId
   useEffect(()=>{
     const { analysisId } = router.query || {}
     if(!analysisId || !supabase) return
-    (async ()=>{
+    ;(async ()=>{
       try{
         setLoading(true); setError('')
         const { data, error } = await supabase.from('analyses').select('*').eq('id', analysisId).single()
         if(error) throw error
-        // ricompongo l'oggetto risultato come lo aspetta la UI
-        const loaded = {
+        setRawRes({
           kpi: data.kpi || {},
           forecast: data.forecast || {},
           anomalies: data.anomalies || [],
           actions: data.actions || [],
-          timeseries: data.timeseries || null // normalmente non lo salviamo: la UI lavora solo con KPI + periodo
-        }
-        setRawRes(loaded)
+          timeseries: data.timeseries || null
+        })
       }catch(e){
         setError(e.message || 'Errore caricamento analisi salvata')
-      }finally{
-        setLoading(false)
-      }
+      }finally{ setLoading(false) }
     })()
-  }, [router.query, supabase])
+  }, [router.query])
 
   const onAnalyze = async()=>{
     setError('')
@@ -63,8 +66,6 @@ export default function Home(){
       form.append('file', f)
       const r=await api.post('/analyze', form, {headers:{'Content-Type':'multipart/form-data'}})
       setRawRes(r.data)
-
-      // salva opzionale su Supabase se configurato
       if(supabase){
         await supabase.from('analyses').insert({
           created_at: new Date().toISOString(),
@@ -80,7 +81,7 @@ export default function Home(){
     }finally{ setLoading(false) }
   }
 
-  // Deriva la timeseries visibile (periodo selezionato) e calcola MoM / YoY
+  // Deriva timeseries per periodo + MoM/YoY
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
@@ -89,7 +90,6 @@ export default function Home(){
     const days = parseInt(period,10)
     const start = new Date(end); start.setDate(end.getDate()-(days-1))
     const current = ts.filter(p => p.d >= start)
-
     const shiftRange = (a,b,months=0,years=0)=>[new Date(a.getFullYear()+years, a.getMonth()+months, a.getDate()), new Date(b.getFullYear()+years, b.getMonth()+months, b.getDate())]
     const [pmStart, pmEnd] = shiftRange(start, end, -1, 0)
     const [pyStart, pyEnd] = shiftRange(start, end, 0, -1)
@@ -103,7 +103,7 @@ export default function Home(){
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Disegna grafico quando cambia la serie “current”
+  // Disegna grafico
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -120,46 +120,68 @@ export default function Home(){
   const kpi = rawRes?.kpi || {}
   const actions = rawRes?.actions || []
 
-  // Advisor testuale
+  // Advisor
   const advisor = useMemo(()=>{
     if(!rawRes) return null
     const tips = []
     const trend = kpi.trend_last_2w_vs_prev_2w_pct ?? 0
     const forecastChange = rawRes?.forecast?.change_vs_last30_pct ?? 0
     const anomalies = rawRes?.anomalies || []
-
     if(trend > 10) tips.push("Trend forte in crescita: aumenta budget su sorgenti top e scala le creatività vincenti.")
     else if (trend < -5) tips.push("Trend in calo: rivedi offerte/pricing e attiva promo tattica 7 giorni.")
     else tips.push("Trend stabile: consolida best seller e testa varianti di prezzo/pacchetti.")
-
     if(forecastChange < 0) tips.push("Forecast sotto ultimi 30 gg: ribilancia stock e spingi prodotti ad alta conversione.")
     else tips.push("Forecast sopra ultimi 30 gg: prepara scorte e customer care per sostenere il volume.")
-
     if(anomalies.length>0) tips.push(`Rilevate anomalie in ${anomalies.length} giorni: controlla prezzi, resi, interruzioni ads.`)
     if(view?.momPct !== null) tips.push(`MoM: ${view.momPct.toFixed(1)}%.`)
     if(view?.yoyPct !== null) tips.push(`YoY: ${view.yoyPct.toFixed(1)}%.`)
-
     const todo = actions.map(a => `• [${a.priority}] ${a.title} (uplift atteso ${a.expected_uplift_pct}%)`)
     return {tips, todo}
   }, [rawRes, actions, kpi, view])
 
-  // Export PDF
+  // Util: carica immagine come dataURL
+  const fetchDataURL = async (path) => {
+    const res = await fetch(path)
+    const blob = await res.blob()
+    return await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  // Export PDF con header brand + logo
   const exportPDF = async()=>{
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
-    const scale = 2
-    doc.setFontSize(18); doc.text('DataPredictor — Report', 24, 32)
-    doc.setFontSize(11); doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 24, 48)
-    const canvas = await html2canvas(reportRef.current, {scale})
+    const pageWidth = doc.internal.pageSize.getWidth()
+    // Header color bar
+    doc.setFillColor(BRAND.color)
+    doc.rect(0, 0, pageWidth, 56, 'F')
+    // Logo + titolo
+    try {
+      const logoData = await fetchDataURL(BRAND.logoPath)
+      doc.addImage(logoData, 'SVG', 18, 12, 32, 32) // SVG support; se PNG cambia in 'PNG'
+    } catch {}
+    doc.setTextColor('#ffffff')
+    doc.setFontSize(18)
+    doc.text(`${BRAND.name} — Report`, 60, 32)
+    doc.setFontSize(11)
+    doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
+
+    // Snapshot contenuto
+    const canvas = await html2canvas(reportRef.current, {scale: 2})
     const imgData = canvas.toDataURL('image/png')
-    const pageWidth = doc.internal.pageSize.getWidth() - 40
-    const ratio = pageWidth / canvas.width
+    const margin = 20
+    const usable = pageWidth - margin*2
+    const ratio = usable / canvas.width
     const imgHeight = canvas.height * ratio
-    doc.addImage(imgData, 'PNG', 20, 64, pageWidth, imgHeight)
+    doc.addImage(imgData, 'PNG', margin, 64, usable, imgHeight)
+
     doc.save('DataPredictor_Report.pdf')
   }
 
-  // Login (magic link) — solo se Supabase configurato
+  // Login via magic link (già presente topbar per badge/Logout)
   const signIn = async(email)=>{
     if(!supabase) return alert('Supabase non configurato')
     const { error } = await supabase.auth.signInWithOtp({ email })
@@ -168,9 +190,9 @@ export default function Home(){
 
   return (
     <>
-      <Head><title>DataPredictor</title></Head>
+      <Head><title>{BRAND.name}</title></Head>
       <main className="container">
-        <h1>DataPredictor</h1>
+        <h1>{BRAND.name}</h1>
 
         {/* Toolbar */}
         <section className="toolbar" style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap', marginBottom:12}}>
@@ -186,8 +208,9 @@ export default function Home(){
 
           <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
 
-          <Link href="/history" style={{marginLeft:16, color:'#0ea5e9'}}>Storico Analisi</Link>
+          <Link href="/history" style={{marginLeft:16, color:BRAND.color}}>Storico Analisi</Link>
 
+          {/* Accesso rapido (facoltativo, topbar mostra badge) */}
           {!supabase ? null : (
             <div style={{marginLeft:'auto'}}>
               <input type="email" placeholder="email per login" id="emailbox" />
@@ -197,7 +220,7 @@ export default function Home(){
         </section>
         {error && <p style={{color:'#b00020'}}>{error}</p>}
 
-        {/* Report (anche per PDF) */}
+        {/* Report area (inclusa nel PDF) */}
         <section ref={reportRef}>
           {rawRes && (
             <>
@@ -244,7 +267,7 @@ export default function Home(){
           )}
         </section>
 
-        {/* JSON raw opzionale */}
+        {/* JSON raw */}
         {rawRes && (
           <details>
             <summary>Vedi JSON</summary>
@@ -255,7 +278,7 @@ export default function Home(){
 
       <style jsx>{`
         .container { padding:24px; max-width:1000px; margin:0 auto; font-family:system-ui,-apple-system,Segoe UI,Roboto }
-        button { margin-left:12px; padding:8px 14px; background:#0ea5e9; color:#fff; border:0; border-radius:6px; cursor:pointer }
+        button { margin-left:12px; padding:8px 14px; background:${BRAND.color}; color:#fff; border:0; border-radius:6px; cursor:pointer }
         button:disabled { opacity:.6; cursor:default }
         .kpis .card { padding:14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff }
         .kpi-title { color:#6b7280; font-size:13px; }
