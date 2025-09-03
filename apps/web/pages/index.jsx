@@ -8,6 +8,8 @@ import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
+import AdvisorPanel from '../components/AdvisorPanel'
+import CheckoutButton from '../components/CheckoutButton'   // ⬅️ AGGIUNTO
 
 const BRAND = {
   name: process.env.NEXT_PUBLIC_BRAND_NAME || 'DataPredictor',
@@ -28,10 +30,7 @@ export default function Home(){
   const [mappingOpen,setMappingOpen]=useState(false)
   const [headers,setHeaders]=useState([])
   const [mapping,setMapping]=useState({
-    date:"",
-    amount:"",
-    price:"",
-    qty:"",
+    date:"", amount:"", price:"", qty:"",
     options:{ date_format:"", decimal:"," }
   })
 
@@ -42,7 +41,6 @@ export default function Home(){
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
   const api = axios.create({ baseURL: apiBase })
 
-  // Carica analisi salvata da Supabase quando si arriva con ?analysisId
   useEffect(()=>{
     const { analysisId } = router.query || {}
     if(!analysisId || !supabase) return
@@ -58,15 +56,12 @@ export default function Home(){
           actions: data.actions || [],
           timeseries: data.timeseries || null
         })
-        // scroll alla sezione analisi
         setTimeout(()=>document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'}), 200)
-      }catch(e){
-        setError(e.message || 'Errore caricamento analisi salvata')
-      }finally{ setLoading(false) }
+      }catch(e){ setError(e.message || 'Errore caricamento analisi salvata') }
+      finally{ setLoading(false) }
     })()
   }, [router.query])
 
-  // Lettura locale header per wizard (CSV/XLSX)
   const readHeaders = async (file)=>{
     const name = file.name.toLowerCase()
     if(name.endsWith('.csv')){
@@ -81,9 +76,7 @@ export default function Home(){
       const json = XLSX.utils.sheet_to_json(ws, { header:1 })
       const first = json[0] || []
       setHeaders(first.map(c=>String(c).trim()))
-    } else {
-      setHeaders([])
-    }
+    } else { setHeaders([]) }
   }
 
   const openMapping = async()=>{
@@ -104,20 +97,16 @@ export default function Home(){
   }
 
   const onAnalyze = async()=>{
-    setError('')
-    setAdvisorData(null)
+    setError(''); setAdvisorData(null)
     const f = fileRef.current?.files?.[0] || null
     if(!f){ setError('Seleziona un file CSV/XLSX'); return }
-    // scroll alla sezione analisi dopo click
     document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'})
     setLoading(true)
     try{
       const form=new FormData()
       form.append('file', f)
       const hasMapping = mapping?.date || mapping?.amount || (mapping?.price && mapping?.qty)
-      if(hasMapping){
-        form.append('mapping', JSON.stringify(mapping))
-      }
+      if(hasMapping){ form.append('mapping', JSON.stringify(mapping)) }
       const r=await api.post('/analyze', form, {headers:{'Content-Type':'multipart/form-data'}})
       setRawRes(r.data)
       if(supabase){
@@ -134,7 +123,6 @@ export default function Home(){
     }finally{ setLoading(false) }
   }
 
-  // Serie filtrata + MoM/YoY
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
@@ -156,7 +144,6 @@ export default function Home(){
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Grafico
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -170,7 +157,6 @@ export default function Home(){
     })
   }, [view])
 
-  // Advisor Pro → /advisor
   const generateAdvisor = async()=>{
     if(!rawRes){ setError('Esegui prima un’analisi.'); return }
     setAdvisorLoading(true); setError('')
@@ -178,40 +164,29 @@ export default function Home(){
       const ctx = { period, mom_pct: view?.momPct ?? null, yoy_pct: view?.yoyPct ?? null }
       const r = await axios.post(`${apiBase}/advisor`, { analysis: rawRes, context: ctx })
       setAdvisorData(r.data)
-    }catch(e){
-      setError(e?.response?.data?.detail || e.message || 'Errore generazione advisor')
-    }finally{ setAdvisorLoading(false) }
+    }catch(e){ setError(e?.response?.data?.detail || e.message || 'Errore generazione advisor') }
+    finally{ setAdvisorLoading(false) }
   }
 
-  // Utils dataURL per PDF
   const fetchDataURL = async (path) => {
-    const res = await fetch(path)
-    const blob = await res.blob()
-    return await new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result)
-      reader.readAsDataURL(blob)
-    })
+    const res = await fetch(path); const blob = await res.blob()
+    return await new Promise((resolve) => { const rd = new FileReader(); rd.onload=()=>resolve(rd.result); rd.readAsDataURL(blob) })
   }
-
-  // PDF brandizzato
   const exportPDF = async()=>{
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
     const pageWidth = doc.internal.pageSize.getWidth()
-    doc.setFillColor(BRAND.color); doc.rect(0, 0, pageWidth, 56, 'F')
+    doc.setFillColor('#0ea5e9'); doc.rect(0, 0, pageWidth, 56, 'F')
     try { const logoData = await fetchDataURL(BRAND.logoPath); doc.addImage(logoData, 'SVG', 18, 12, 32, 32) } catch {}
     doc.setTextColor('#ffffff'); doc.setFontSize(18); doc.text(`${BRAND.name} — Report`, 60, 32)
     doc.setFontSize(11); doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
     const canvas = await html2canvas(reportRef.current, {scale: 2})
-    const imgData = canvas.toDataURL('image/png')
-    const margin = 20, usable = pageWidth - margin*2
-    const ratio = usable / canvas.width, imgHeight = canvas.height * ratio
-    doc.addImage(imgData, 'PNG', margin, 64, usable, imgHeight)
+    const imgData = canvas.toDataURL('image/png'); const margin = 20
+    const usable = pageWidth - margin*2; const ratio = usable / canvas.width
+    doc.addImage(imgData, 'PNG', margin, 64, usable, canvas.height * ratio)
     doc.save('DataPredictor_Report.pdf')
   }
 
-  // UI helpers
   const scrollToAnalyze = ()=> document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'})
   const scrollToHow = ()=> document.getElementById('how')?.scrollIntoView({behavior:'smooth'})
 
@@ -221,22 +196,19 @@ export default function Home(){
 
       {/* HERO */}
       <section className="hero">
-        <div className="hero-inner">
-          <div className="hero-tag">AI Data Advisor</div>
-          <h1>Trasforma file <span className="grad">CSV/XLSX</span> in insight e piani d’azione.</h1>
-          <p className="hero-sub">
-            Carichi i dati, <b>DataPredictor</b> li legge come un consulente:
-            KPI chiave, forecast, anomalie e un <b>report discorsivo</b> con to-do operativi a 7/30/90 giorni.
-          </p>
-          <div className="hero-cta">
-            <button onClick={scrollToAnalyze}>Prova subito</button>
-            <button className="btn-outline" onClick={scrollToHow}>Scopri come funziona</button>
+        <div className="container hero-inner">
+          <div className="card-gradient" style={{display:'inline-block'}}>
+            <div className="inner" style={{padding:'6px 12px', borderRadius:12, fontWeight:700, color:'#c7d2fe'}}>AI Data Advisor</div>
           </div>
-          <div className="hero-badges">
-            <span>• Upload CSV/XLSX</span>
-            <span>• Advisor AI</span>
-            <span>• Export PDF brandizzato</span>
-            <span>• Salvataggio analisi</span>
+          <h1>Trasforma file <span className="grad">CSV/XLSX</span> in insight <br/> e piani d’azione concreti.</h1>
+          <p className="hero-sub">
+            Carica i tuoi dati, <b>{BRAND.name}</b> li legge come un consulente senior:
+            KPI chiave, forecast, anomalie e un <b>report di 25–30 righe</b> con to-do operativi a 7/30/90 giorni.
+          </p>
+          <div className="hero-cta" style={{ gap: 12 }}>
+            <button className="cta-primary" onClick={scrollToAnalyze}>Prova subito</button>
+            <Link className="cta-ghost" href="/pricing">Prezzi</Link>
+            <CheckoutButton priceId={process.env.NEXT_PUBLIC_STRIPE_PRICE_ID_PRO} /> {/* ⬅️ AGGIUNTO */}
           </div>
         </div>
       </section>
@@ -246,20 +218,20 @@ export default function Home(){
         <div className="container">
           <h2>Cosa può fare l’app</h2>
           <div className="grid3">
-            <div className="feature">
+            <div className="card feature">
               <div className="icn">📈</div>
               <h3>KPI & Trend</h3>
-              <p>Ricavi 30gg, ticket medio, andamento 2w vs 2w, MoM/YoY e grafico giornaliero pulito.</p>
+              <p>Ricavi 30gg, ticket medio, 2w vs 2w, MoM/YoY e grafico pulito.</p>
             </div>
-            <div className="feature">
+            <div className="card feature">
               <div className="icn">🧠</div>
               <h3>Advisor AI</h3>
-              <p>Report di 25–30 righe: lettura dati, cause probabili, rischi e azioni prioritarie.</p>
+              <p>Report discorsivo di 25–30 righe: lettura dati, cause, rischi e azioni prioritarie.</p>
             </div>
-            <div className="feature">
+            <div className="card feature">
               <div className="icn">🧪</div>
               <h3>What-if Pricing</h3>
-              <p>Simula l’impatto di prezzo, elasticità e COGS su ricavi e margini in 30 giorni.</p>
+              <p>Simula impatto di prezzo, elasticità e COGS su ricavi e margini in 30 giorni.</p>
             </div>
           </div>
         </div>
@@ -271,8 +243,8 @@ export default function Home(){
           <h2>Come funziona</h2>
           <ol className="steps">
             <li><b>1.</b> Carica un file (.csv o .xlsx)</li>
-            <li><b>2.</b> (Opzionale) <i>Mappa le colonne</i> (Data, Amount o Prezzo×Qty)</li>
-            <li><b>3.</b> Premi <i>Analizza</i>: KPI, forecast e anomalie in pochi secondi</li>
+            <li><b>2.</b> (Opzionale) Mappa le colonne (Data, Amount o Prezzo×Qty)</li>
+            <li><b>3.</b> Premi <i>Analizza</i>: KPI, forecast e anomalie</li>
             <li><b>4.</b> Genera il <i>Report consulente</i> + Playbook 7/30/90</li>
             <li><b>5.</b> Esporta il <i>PDF brandizzato</i> e condividi</li>
           </ol>
@@ -284,18 +256,15 @@ export default function Home(){
         <div className="container">
           <h2>Formati supportati</h2>
           <div className="grid3">
-            <div className="card small">
-              <h4>CSV</h4>
-              <p>Separatore virgola o punto-e-virgola. Decimale virgola o punto.</p>
-            </div>
-            <div className="card small">
-              <h4>XLSX</h4>
-              <p>Prima riga = intestazioni. Prima sheet analizzata.</p>
-            </div>
-            <div className="card small">
-              <h4>Colonne minime</h4>
-              <p><b>Data</b> e <b>Amount</b> — oppure <b>Prezzo</b> + <b>Quantità</b>.</p>
-            </div>
+            <div className="card-gradient"><div className="inner">
+              <h4>CSV</h4><p>Separatore virgola o punto-e-virgola. Decimale virgola o punto.</p>
+            </div></div>
+            <div className="card-gradient"><div className="inner">
+              <h4>XLSX</h4><p>Prima riga = intestazioni. Si analizza il primo foglio.</p>
+            </div></div>
+            <div className="card-gradient"><div className="inner">
+              <h4>Colonne minime</h4><p><b>Data</b> e <b>Amount</b> — oppure <b>Prezzo</b> + <b>Quantità</b>.</p>
+            </div></div>
           </div>
         </div>
       </section>
@@ -304,19 +273,19 @@ export default function Home(){
       <section className="section alt">
         <div className="container">
           <h2>Privacy & controllo</h2>
-          <p>I file vengono processati per estrarre KPI e serie giornaliere. Puoi scegliere di non conservarli; salviamo solo le analisi per lo storico. In qualsiasi momento puoi richiedere la rimozione.</p>
+          <p>I file sono processati per estrarre KPI e serie giornaliere. Puoi scegliere di non conservarli; salviamo solo le analisi per lo storico. Richiedi la rimozione in qualunque momento.</p>
         </div>
       </section>
 
-      {/* ANALYZE SECTION */}
-      <main className="container" id="analyze" style={{paddingTop:24}}>
+      {/* ANALYZE */}
+      <main className="container" id="analyze" style={{paddingTop:24, paddingBottom:40}}>
         <h2>Analizza ora</h2>
         <p className="muted" style={{marginTop:-6}}>Carica un file, opzionalmente mappa le colonne e ottieni subito KPI, grafico e advisor.</p>
 
         <section className="toolbar">
           <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>{ setError(''); setHeaders([]); }} />
-          <button onClick={openMapping}>Mappa colonne</button>
-          <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
+          <button className="ghost" onClick={openMapping}>Mappa colonne</button>
+          <button className="primary" onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
 
           <div className="period">
             <label>Periodo:</label>
@@ -325,16 +294,15 @@ export default function Home(){
             </select>
           </div>
 
-          <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
+          <button className="ghost" onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
           <Link href="/history" className="link">Storico Analisi</Link>
         </section>
         {error && <p className="error">{error}</p>}
 
-        {/* Wizard mappatura */}
         {mappingOpen && (
           <div className="modal">
             <div className="modal-card">
-              <h3>Mappatura colonne</h3>
+              <h3 style={{marginTop:0}}>Mappatura colonne</h3>
               {headers.length===0 ? <p>Seleziona un file per vedere le intestazioni.</p> : (
                 <>
                   <div className="grid2">
@@ -386,19 +354,18 @@ export default function Home(){
                     </div>
                   </div>
                   <p className="muted" style={{marginTop:8}}>
-                    Minimo richiesto: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>).
+                    Minimo: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>).
                   </p>
                 </>
               )}
-              <div style={{display:'flex', gap:8, justifyContent:'flex-end', marginTop:12}}>
+              <div style={{display:'flex', gap:10, justifyContent:'flex-end', marginTop:12}}>
                 <button className="btn-outline" onClick={()=>setMappingOpen(false)}>Chiudi</button>
-                <button onClick={()=>{ setMappingOpen(false); }}>Ok</button>
+                <button className="primary" onClick={()=>{ setMappingOpen(false); }}>Ok</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Report */}
         <section ref={reportRef}>
           {rawRes && (
             <>
@@ -412,9 +379,11 @@ export default function Home(){
                 </div>
               </section>
 
-              <section className="diff">
-                <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
-                <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
+              <section className="card" style={{padding:16, margin:'10px 0'}}>
+                <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                  <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
+                  <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
+                </div>
               </section>
 
               <section className="chart-wrap">
@@ -422,33 +391,29 @@ export default function Home(){
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
-              <section className="advisor">
+              <section className="advisor" style={{marginTop:16}}>
                 <h3>Advisor Pro</h3>
-                <button onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>{advisorLoading ? 'Generazione...' : 'Genera report consulente'}</button>
-                {advisorData && (
-                  <>
-                    <pre className="box" style={{whiteSpace:'pre-wrap'}}>{advisorData.advisor_text}</pre>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
-                      <div className="card">
-                        <h4>Playbook 7 giorni</h4>
-                        <ul>{(advisorData.playbook?.['7d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
-                      </div>
-                      <div className="card">
-                        <h4>Playbook 30 giorni</h4>
-                        <ul>{(advisorData.playbook?.['30d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
-                      </div>
-                      <div className="card">
-                        <h4>Playbook 90 giorni</h4>
-                        <ul>{(advisorData.playbook?.['90d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
-                      </div>
-                    </div>
-                    <p className="muted">Modalità: {advisorData.mode}</p>
-                  </>
+                <button className="primary" onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>
+                  {advisorLoading ? 'Generazione...' : 'Genera report consulente'}
+                </button>
+
+                {(advisorLoading || advisorData) && (
+                  <div style={{marginTop:12}}>
+                    <AdvisorPanel
+                      loading={advisorLoading}
+                      kpi={rawRes?.kpi || {}}
+                      reportLLM={advisorData?.advisor_text || ''}
+                      playbooks={advisorData?.playbook || {}}
+                      actions={rawRes?.actions || []}
+                    />
+                    {advisorData?.mode && (
+                      <p className="muted" style={{marginTop:8}}>Modalità: {advisorData.mode}</p>
+                    )}
+                  </div>
                 )}
               </section>
 
-              {/* Azioni dal backend */}
-              <section className="actions">
+              <section className="actions" style={{marginTop:16}}>
                 <h3>Azioni consigliate</h3>
                 {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
                 <ol>
@@ -459,61 +424,6 @@ export default function Home(){
           )}
         </section>
       </main>
-
-      <style jsx>{`
-        /* HERO */
-        .hero{background:linear-gradient(180deg, rgba(14,165,233,.12), transparent), radial-gradient(600px 300px at 10% -10%, rgba(14,165,233,.25), transparent), radial-gradient(600px 300px at 90% -20%, rgba(14,165,233,.18), transparent)}
-        .hero-inner{max-width:1000px;margin:0 auto;padding:64px 24px 32px;text-align:center}
-        .hero-tag{display:inline-block;padding:6px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted);background:var(--card-bg)}
-        .hero h1{font-size:36px;line-height:1.15;margin:14px 0 8px}
-        .grad{background:linear-gradient(90deg, #38bdf8, #0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent}
-        .hero-sub{max-width:820px;margin:0 auto;color:var(--muted);font-size:18px}
-        .hero-cta{display:flex;gap:12px;justify-content:center;margin-top:16px}
-        .hero-badges{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:12px;color:var(--muted);font-size:14px}
-
-        /* SECTIONS */
-        .section{padding:40px 24px}
-        .section.alt{background:var(--card-bg)}
-        .container{max-width:1000px;margin:0 auto}
-        h2{margin:0 0 12px}
-        .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-        .feature{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px}
-        .icn{font-size:22px}
-        .steps{margin:0;padding-left:18px;color:var(--text)}
-
-        /* ANALYZE */
-        .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:12px 0 6px }
-        .period { margin-left:16px; display:flex; gap:8px; align-items:center }
-        button { margin-left:0; padding:10px 16px; background: var(--brand); color:#fff; border:0; border-radius:8px; cursor:pointer; font-weight:600 }
-        .btn-outline { background:transparent; border:1px solid var(--border); color: var(--text); border-radius:8px; padding:10px 16px; cursor:pointer }
-        .link { margin-left:16px; color: var(--brand); text-decoration:none }
-        .error { color: var(--error); margin-top:8px; }
-
-        .kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin: 16px 0; }
-        .card { padding:14px; border:1px solid var(--border); border-radius:12px; background: var(--card-bg); }
-        .card.small{padding:14px}
-        .kpi-title { color: var(--muted); font-size:13px; }
-        .kpi-value { font-size:20px; font-weight:700; margin-top:6px; }
-        .kpi-value.pos { color:#059669; } .kpi-value.neg { color:#dc2626; }
-
-        .diff { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0; color: var(--text) }
-        .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:12px; padding:8px; background: var(--card-bg); }
-
-        /* Modal */
-        .modal{position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50}
-        .modal-card{ background: var(--bg); color: var(--text); border:1px solid var(--border); border-radius:12px; padding:16px; width:680px; max-width:100% }
-        .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-        label{display:block; font-size:13px; color:var(--muted); margin-bottom:4px}
-        select, input[type="number"], input[type="text"]{ width:100%; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text) }
-
-        @media (max-width: 900px){
-          .grid3{ grid-template-columns:1fr; }
-          .kpis{ grid-template-columns:1fr 1fr; }
-        }
-        @media (max-width: 600px){
-          .kpis{ grid-template-columns:1fr; }
-        }
-      `}</style>
     </>
   )
 }
