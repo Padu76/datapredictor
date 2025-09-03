@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import axios from 'axios'
 import Head from 'next/head'
+import Link from 'next/link'
+import { useRouter } from 'next/router'
+import axios from 'axios'
 import Chart from 'chart.js/auto'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
@@ -13,7 +15,8 @@ const PERIODS = [
 ]
 
 export default function Home(){
-  const fileRef = useRef(null)          // <--- nuovo: usiamo il ref
+  const router = useRouter()
+  const fileRef = useRef(null)
   const [rawRes,setRawRes]=useState(null)
   const [period,setPeriod]=useState('30')
   const [loading,setLoading]=useState(false)
@@ -24,12 +27,36 @@ export default function Home(){
 
   const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' })
 
+  // Se arrivo con ?analysisId=... scarico l’analisi salvata da Supabase e la carico in pagina
+  useEffect(()=>{
+    const { analysisId } = router.query || {}
+    if(!analysisId || !supabase) return
+    (async ()=>{
+      try{
+        setLoading(true); setError('')
+        const { data, error } = await supabase.from('analyses').select('*').eq('id', analysisId).single()
+        if(error) throw error
+        // ricompongo l'oggetto risultato come lo aspetta la UI
+        const loaded = {
+          kpi: data.kpi || {},
+          forecast: data.forecast || {},
+          anomalies: data.anomalies || [],
+          actions: data.actions || [],
+          timeseries: data.timeseries || null // normalmente non lo salviamo: la UI lavora solo con KPI + periodo
+        }
+        setRawRes(loaded)
+      }catch(e){
+        setError(e.message || 'Errore caricamento analisi salvata')
+      }finally{
+        setLoading(false)
+      }
+    })()
+  }, [router.query, supabase])
+
   const onAnalyze = async()=>{
     setError('')
-
-    const f = fileRef.current?.files?.[0] || null   // <--- leggiamo il file direttamente dall'input
+    const f = fileRef.current?.files?.[0] || null
     if(!f){ setError('Seleziona un file CSV/XLSX'); return }
-
     setLoading(true)
     try{
       const form=new FormData()
@@ -53,7 +80,7 @@ export default function Home(){
     }finally{ setLoading(false) }
   }
 
-  // Timeseries per periodo + YoY/MoM
+  // Deriva la timeseries visibile (periodo selezionato) e calcola MoM / YoY
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
@@ -64,8 +91,8 @@ export default function Home(){
     const current = ts.filter(p => p.d >= start)
 
     const shiftRange = (a,b,months=0,years=0)=>[new Date(a.getFullYear()+years, a.getMonth()+months, a.getDate()), new Date(b.getFullYear()+years, b.getMonth()+months, b.getDate())]
-    const [pmStart, pmEnd] = shiftRange(start, end, -1, 0) // prev month range grossolano
-    const [pyStart, pyEnd] = shiftRange(start, end, 0, -1) // prev year
+    const [pmStart, pmEnd] = shiftRange(start, end, -1, 0)
+    const [pyStart, pyEnd] = shiftRange(start, end, 0, -1)
     const inRange = (p, a, b) => p.d >= a && p.d <= b
     const seriesMoM = ts.filter(p => inRange(p, pmStart, pmEnd))
     const seriesYoY = ts.filter(p => inRange(p, pyStart, pyEnd))
@@ -76,7 +103,7 @@ export default function Home(){
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Disegna grafico
+  // Disegna grafico quando cambia la serie “current”
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -93,7 +120,7 @@ export default function Home(){
   const kpi = rawRes?.kpi || {}
   const actions = rawRes?.actions || []
 
-  // Advisor
+  // Advisor testuale
   const advisor = useMemo(()=>{
     if(!rawRes) return null
     const tips = []
@@ -132,6 +159,7 @@ export default function Home(){
     doc.save('DataPredictor_Report.pdf')
   }
 
+  // Login (magic link) — solo se Supabase configurato
   const signIn = async(email)=>{
     if(!supabase) return alert('Supabase non configurato')
     const { error } = await supabase.auth.signInWithOtp({ email })
@@ -144,6 +172,7 @@ export default function Home(){
       <main className="container">
         <h1>DataPredictor</h1>
 
+        {/* Toolbar */}
         <section className="toolbar" style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap', marginBottom:12}}>
           <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>setError('')} />
           <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
@@ -157,6 +186,8 @@ export default function Home(){
 
           <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
 
+          <Link href="/history" style={{marginLeft:16, color:'#0ea5e9'}}>Storico Analisi</Link>
+
           {!supabase ? null : (
             <div style={{marginLeft:'auto'}}>
               <input type="email" placeholder="email per login" id="emailbox" />
@@ -166,9 +197,11 @@ export default function Home(){
         </section>
         {error && <p style={{color:'#b00020'}}>{error}</p>}
 
+        {/* Report (anche per PDF) */}
         <section ref={reportRef}>
           {rawRes && (
             <>
+              {/* KPI */}
               <section className="kpis" style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:12,margin:'16px 0'}}>
                 <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
                 <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
@@ -179,16 +212,19 @@ export default function Home(){
                 </div>
               </section>
 
+              {/* MoM / YoY */}
               <section style={{display:'flex',gap:16,flexWrap:'wrap',margin:'8px 0'}}>
                 <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
                 <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
               </section>
 
+              {/* Chart */}
               <section className="chart-wrap">
                 <h3>Ricavi giornalieri</h3>
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
+              {/* Advisor */}
               <section className="advisor">
                 <h3>Advisor</h3>
                 <ul>{(advisor?.tips||[]).map((t,i)=><li key={i}>{t}</li>)}</ul>
@@ -196,6 +232,7 @@ export default function Home(){
                 <pre className="box">{(advisor?.todo||[]).join('\n')}</pre>
               </section>
 
+              {/* Azioni dal backend */}
               <section className="actions">
                 <h3>Azioni consigliate</h3>
                 {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
@@ -207,6 +244,7 @@ export default function Home(){
           )}
         </section>
 
+        {/* JSON raw opzionale */}
         {rawRes && (
           <details>
             <summary>Vedi JSON</summary>
