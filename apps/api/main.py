@@ -1,3 +1,4 @@
+# apps/api/main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -128,7 +129,7 @@ async def analyze(
     daily = {}
     for r in rows:
         d = parse_date(r.get(date_col), fmt=date_fmt)
-        if not d: 
+        if not d:
             continue
         if amount_col:
             amt = to_float(r.get(amount_col), decimal=decimal)
@@ -221,70 +222,132 @@ class AdvisorPayload(BaseModel):
     context: dict | None = None
 
 def rule_based_advisor(a: dict, ctx: dict | None):
-    kpi = a.get("kpi", {})
-    forecast = a.get("forecast", {})
-    anomalies = a.get("anomalies", [])
-    actions = a.get("actions", [])
-    mom = (ctx or {}).get("mom_pct", None)
-    yoy = (ctx or {}).get("yoy_pct", None)
+    """
+    Versione discorsiva (no bullet duplicati). Ritorna:
+      - advisor_text: testo in 6–8 paragrafi, tono consulenziale
+      - playbook: dict con piani 7/30/90 giorni
+    Non richiede helper esterni (formatter EUR/% inclusi inline).
+    """
+    ctx = ctx or {}
+    kpi = (a or {}).get("kpi", {}) or {}
+    fc  = (a or {}).get("forecast", {}) or {}
+    anomalies = (a or {}).get("anomalies", []) or []
+    actions   = (a or {}).get("actions", []) or []
 
-    lines = []
-    lines.append("Panoramica generale dell'andamento, letta come un consulente operativo.")
-    lines.append(f"• Ricavi ultimi 30 giorni: € {kpi.get('revenue_30d', 0)}.")
-    lines.append(f"• Giorni con vendite: {kpi.get('orders_days_positive_30d', 0)}.")
-    lines.append(f"• Ticket medio: € {kpi.get('avg_ticket', 0)}.")
-    lines.append(f"• Trend 2 settimane vs 2 precedenti: {kpi.get('trend_last_2w_vs_prev_2w_pct', 0)}%.")
-    lines.append(f"• Forecast 30 giorni: € {forecast.get('forecast_30d_sum', 0)} ({forecast.get('change_vs_last30_pct', 0)}% vs ultimi 30).")
-    if mom is not None: lines.append(f"• Variazione MoM stimata sul periodo selezionato: {round(mom,1)}%.")
-    if yoy is not None: lines.append(f"• Variazione YoY stimata sul periodo selezionato: {round(yoy,1)}%.")
+    # --- formatter interni, no dipendenze ---
+    def _eur(x, d=0):
+        try:
+            return ("€ {:,.%df}" % d).format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "€ 0"
+    def _pct(x, d=2):
+        try:
+            return f"{float(x):.{d}f}%"
+        except Exception:
+            return "0%"
 
-    trend = kpi.get("trend_last_2w_vs_prev_2w_pct", 0)
-    fchg = forecast.get("change_vs_last30_pct", 0)
-    if trend > 10: lines.append("La dinamica recente è robusta: spingere ciò che già funziona massimizza il ROI.")
-    elif trend < -5: lines.append("Segnali di raffreddamento: serve un'azione tattica immediata per invertire il trend.")
-    else: lines.append("Stabilità moderata: puntare su efficienza e micro-ottimizzazioni continua.")
-    if fchg < 0: lines.append("Il forecast suggerisce un potenziale rallentamento: ribilanciare stock e domanda.")
-    else: lines.append("Il forecast è positivo: preparare capacità operativa (stock, customer care, consegne).")
+    rev30   = kpi.get("revenue_30d")
+    days    = kpi.get("orders_days_positive_30d")
+    aov     = kpi.get("avg_ticket")
+    trend2w = kpi.get("trend_last_2w_vs_prev_2w_pct")
+    fsum    = fc.get("forecast_30d_sum")
+    fchg    = fc.get("change_vs_last30_pct")
+    mom     = ctx.get("mom_pct", None)
+    yoy     = ctx.get("yoy_pct", None)
 
-    if anomalies: lines.append(f"{len(anomalies)} anomalie da indagare (prezzi, resi, ADS).")
-    else: lines.append("Nessuna anomalia rilevante nel periodo.")
+    # --- narrativa in paragrafi (niente while / ripetizioni) ---
+    parts = []
 
-    if actions:
-        lines.append("Azioni tattiche (breve):")
-        for a_ in actions[:4]:
-            lines.append(f"– [{a_.get('priority','')}] {a_.get('title','')} (uplift atteso {a_.get('expected_uplift_pct','?')}%).")
+    # Fotografia iniziale
+    parts.append(
+        f"Negli ultimi 30 giorni hai generato {_eur(rev30)} di ricavi, distribuiti su "
+        f"{(days if days is not None else '—')} giornate con vendite. "
+        f"Il ticket medio si attesta a {_eur(aov, 2)}."
+    )
 
-    lines.append("Pilastri: 1) Focus top performer; 2) Test A/B prezzo/pacchetti; 3) Promozioni sostenibili; 4) Checkout fluido.")
-    lines.append("Backlog: pricing ±5–10%; bundle/upsell; refresh creatività; headline orientata al valore; retention a clienti dormienti.")
-    lines.append("Rischi: erosione margine; stock-out; saturazione audience. Mitigazioni: soglie margine, early warning stock, refresh audience.")
-    lines.append("Target: +8–12% ricavi 30gg, AOV +3–5%, CAC stabile o in calo.")
-    while len(lines) < 27:
-        lines.append("Nota operativa: misura gli impatti e iterare rapidamente.")
-    advisor_text = "\n".join(lines)
+    # Trend breve periodo
+    if trend2w is not None:
+        segnale = "positivo" if float(trend2w) >= 0 else "di rallentamento"
+        parts.append(
+            f"Il trend delle ultime due settimane rispetto alle due precedenti è {_pct(trend2w)}, "
+            f"un segnale {segnale} che descrive bene la dinamica recente."
+        )
 
+    # Forecast
+    if fsum is not None:
+        if fchg is not None:
+            tag = "in crescita" if float(fchg) >= 0 else "in raffreddamento"
+            parts.append(
+                f"Il forecast a 30 giorni stima {_eur(fsum)} ({_pct(fchg)} vs ultimi 30): lo scenario è {tag}. "
+                "Conviene preparare la capacità operativa — stock, customer care e consegne — per sostenere il volume atteso."
+            )
+        else:
+            parts.append(
+                f"Il forecast a 30 giorni stima {_eur(fsum)}. "
+                "Mantieni presidio sul customer journey e sulla supply per consolidare la traiettoria."
+            )
+
+    # Indicatori extra (se presenti)
+    extra = []
+    if mom is not None: extra.append(f"MoM {_pct(mom, 1)}")
+    if yoy is not None: extra.append(f"YoY {_pct(yoy, 1)}")
+    if extra:
+        parts.append("Indicatori aggiuntivi: " + " | ".join(extra) + ".")
+
+    # Anomalie
+    if anomalies:
+        parts.append(
+            f"Si registrano {len(anomalies)} giornate anomale da indagare (prezzi, resi, advertising). "
+            f"Esempi: {', '.join(anomalies[:3])}{', …' if len(anomalies) > 3 else ''}."
+        )
+    else:
+        parts.append("Non risultano anomalie rilevanti nel periodo analizzato.")
+
+    # Linea guida tattica
+    parts.append(
+        "Linea guida: spingi ciò che già funziona e affianca piccoli esperimenti controllati — "
+        "A/B test su prezzo o bundle, promozioni leggere e snellimento del checkout."
+    )
+
+    # Rischi & mitigazioni
+    parts.append(
+        "Rischi principali: erosione dei margini, stock-out e saturazione audience. "
+        "Mitigazioni: soglie minime di margine, early warning scorte e refresh periodico di creatività e targeting."
+    )
+
+    # Target
+    parts.append(
+        "Obiettivi a 30 giorni: ricavi +8–12%, AOV +3–5%, CAC stabile o in calo. "
+        "Misura ogni esperimento e itera rapidamente: ogni insight deve tradursi in una decisione operativa."
+    )
+
+    advisor_text = "\n\n".join(parts)  # paragrafi separati con righe vuote
+
+    # --- Playbook operativo coerente (7 / 30 / 90) ---
     playbook = {
         "7d": [
-            "Diagnosi driver ricavi (canali/SKU).",
-            "Promo tattica 7gg su top SKU (margine protetto).",
-            "Test A/B prezzo/bundle su 1 prodotto core.",
-            "Snellisci checkout (campi, step).",
-            "Setup alert anomalie."
+            "Diagnosi driver ricavi per canale/SKU.",
+            "Promo tattica 7gg sui top seller (margine protetto).",
+            "A/B test su prezzo o bundle su 1 prodotto core.",
+            "Snellisci checkout (campi/step, rimozione frizioni).",
+            "Imposta alert su anomalie e stock."
         ],
         "30d": [
-            "Scala canali ROI+, spegni i sotto-performanti.",
-            "Bundle/upsell su 2–3 offerte.",
-            "Ottimizza supply per evitare stock-out.",
-            "Sequenza retention su dormienti.",
-            "Revisione prezzo in base ai test."
+            "Scala i canali con ROI positivo, riduci i sotto-performanti.",
+            "Attiva bundle/upsell su 2–3 offerte chiave.",
+            "Ottimizza supply per prevenire stock-out.",
+            "Sequenza di retention sui clienti dormienti.",
+            "Revisione prezzi alla luce degli esiti A/B."
         ],
         "90d": [
-            "Roadmap creatività e audience.",
-            "Listino e promo calendar per stagionalità.",
-            "Cohort/LTV, loyalty e CRM automation.",
-            "Allineamento crescita/margine e aggiornamento playbook.",
-            "Documenta apprendimenti."
+            "Roadmap creatività/audience e calendario promozioni.",
+            "Loyalty/CRM automation, analisi coorti e LTV.",
+            "Allineamento crescita-margine e aggiornamento playbook.",
+            "Standardizza best practice e documenta gli apprendimenti.",
+            "Dashboard di tracking per gli esperimenti chiave."
         ]
     }
+
     return advisor_text, playbook
 
 def call_llm(advisor_prompt: str):
@@ -340,3 +403,4 @@ async def advisor(payload: AdvisorPayload):
         return {"mode":"llm", "advisor_text": llm_text, "playbook": playbook}
     rb_text, playbook = rule_based_advisor(a, ctx)
     return {"mode":"rule-based", "advisor_text": rb_text, "playbook": playbook}
+
