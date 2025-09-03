@@ -13,24 +13,27 @@ const PERIODS = [
 ]
 
 export default function Home(){
-  const [file,setFile]=useState(null)
-  const [rawRes,setRawRes]=useState(null)   // risposta grezza
+  const fileRef = useRef(null)          // <--- nuovo: usiamo il ref
+  const [rawRes,setRawRes]=useState(null)
   const [period,setPeriod]=useState('30')
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
-  const reportRef = useRef(null) // per PDF
+  const reportRef = useRef(null)
 
   const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' })
 
   const onAnalyze = async()=>{
     setError('')
-    if(!file){ setError('Seleziona un file CSV/XLSX'); return }
+
+    const f = fileRef.current?.files?.[0] || null   // <--- leggiamo il file direttamente dall'input
+    if(!f){ setError('Seleziona un file CSV/XLSX'); return }
+
     setLoading(true)
     try{
       const form=new FormData()
-      form.append('file', file)
+      form.append('file', f)
       const r=await api.post('/analyze', form, {headers:{'Content-Type':'multipart/form-data'}})
       setRawRes(r.data)
 
@@ -46,42 +49,34 @@ export default function Home(){
         })
       }
     }catch(e){
-      setError(e?.response?.data?.detail || e.message)
+      setError(e?.response?.data?.detail || e.message || 'Errore sconosciuto')
     }finally{ setLoading(false) }
   }
 
-  // Timeseries filtrata per periodo e calcoli YoY/MoM
+  // Timeseries per periodo + YoY/MoM
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
     if(ts.length===0) return null
-
     const end = ts[ts.length-1].d
     const days = parseInt(period,10)
-    const start = new Date(end); start.setDate(end.getDate()- (days-1))
+    const start = new Date(end); start.setDate(end.getDate()-(days-1))
     const current = ts.filter(p => p.d >= start)
 
-    // Serie confronto
-    const prevMonthStart = new Date(start); prevMonthStart.setMonth(prevMonthStart.getMonth()-1)
-    const prevMonthEnd   = new Date(end);   prevMonthEnd.setMonth(prevMonthEnd.getMonth()-1)
-    const prevYearStart  = new Date(start); prevYearStart.setFullYear(prevYearStart.getFullYear()-1)
-    const prevYearEnd    = new Date(end);   prevYearEnd.setFullYear(prevYearEnd.getFullYear()-1)
-
+    const shiftRange = (a,b,months=0,years=0)=>[new Date(a.getFullYear()+years, a.getMonth()+months, a.getDate()), new Date(b.getFullYear()+years, b.getMonth()+months, b.getDate())]
+    const [pmStart, pmEnd] = shiftRange(start, end, -1, 0) // prev month range grossolano
+    const [pyStart, pyEnd] = shiftRange(start, end, 0, -1) // prev year
     const inRange = (p, a, b) => p.d >= a && p.d <= b
-    const seriesMoM = ts.filter(p => inRange(p, prevMonthStart, prevMonthEnd))
-    const seriesYoY = ts.filter(p => inRange(p, prevYearStart,  prevYearEnd))
-
+    const seriesMoM = ts.filter(p => inRange(p, pmStart, pmEnd))
+    const seriesYoY = ts.filter(p => inRange(p, pyStart, pyEnd))
     const sum = arr => arr.reduce((s,x)=>s + (x?.value||0), 0)
-    const revenue = sum(current)
-    const mom      = sum(seriesMoM)
-    const yoy      = sum(seriesYoY)
+    const revenue = sum(current), mom=sum(seriesMoM), yoy=sum(seriesYoY)
     const momPct = mom ? ((revenue-mom)/mom*100) : null
     const yoyPct = yoy ? ((revenue-yoy)/yoy*100) : null
-
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Disegna/aggiorna grafico
+  // Disegna grafico
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -90,17 +85,15 @@ export default function Home(){
     chartRef.current = new Chart(canvasRef.current, {
       type: 'line',
       data: { labels, datasets: [{ label: 'Ricavi giornalieri', data: values }] },
-      options: {
-        responsive: true, maintainAspectRatio: false, plugins:{ legend:{display:false}},
-        scales:{ x:{ ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:8 }}, y:{ beginAtZero:true } }
-      }
+      options: { responsive: true, maintainAspectRatio: false, plugins:{ legend:{display:false}},
+        scales:{ x:{ ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:8 }}, y:{ beginAtZero:true } } }
     })
   }, [view])
 
   const kpi = rawRes?.kpi || {}
   const actions = rawRes?.actions || []
 
-  // Advisor testuale
+  // Advisor
   const advisor = useMemo(()=>{
     if(!rawRes) return null
     const tips = []
@@ -108,30 +101,16 @@ export default function Home(){
     const forecastChange = rawRes?.forecast?.change_vs_last30_pct ?? 0
     const anomalies = rawRes?.anomalies || []
 
-    if(trend > 10) {
-      tips.push("Trend forte in crescita: aumenta budget sulle sorgenti top e scala le creatività vincenti.")
-    } else if (trend < -5) {
-      tips.push("Trend in calo: rivedi offerte/pricing e attiva una promo tattica 7 giorni.")
-    } else {
-      tips.push("Trend stabile: consolida i best seller e testa piccole varianti di prezzo/pacchetti.")
-    }
+    if(trend > 10) tips.push("Trend forte in crescita: aumenta budget su sorgenti top e scala le creatività vincenti.")
+    else if (trend < -5) tips.push("Trend in calo: rivedi offerte/pricing e attiva promo tattica 7 giorni.")
+    else tips.push("Trend stabile: consolida best seller e testa varianti di prezzo/pacchetti.")
 
-    if(forecastChange < 0) {
-      tips.push("Forecast sotto gli ultimi 30 gg: ribilancia stock e spingi campagne sui prodotti ad alta conversione.")
-    } else {
-      tips.push("Forecast sopra gli ultimi 30 gg: prepara scorte e customer care per sostenere il volume.")
-    }
+    if(forecastChange < 0) tips.push("Forecast sotto ultimi 30 gg: ribilancia stock e spingi prodotti ad alta conversione.")
+    else tips.push("Forecast sopra ultimi 30 gg: prepara scorte e customer care per sostenere il volume.")
 
-    if(anomalies.length>0){
-      tips.push(`Rilevate anomalie in ${anomalies.length} giorni: controlla prezzi, resi, interruzioni ads.`)
-    }
-
-    if(view?.momPct !== null){
-      tips.push(`MoM: ${view.momPct.toFixed(1)}%.`)
-    }
-    if(view?.yoyPct !== null){
-      tips.push(`YoY: ${view.yoyPct.toFixed(1)}%.`)
-    }
+    if(anomalies.length>0) tips.push(`Rilevate anomalie in ${anomalies.length} giorni: controlla prezzi, resi, interruzioni ads.`)
+    if(view?.momPct !== null) tips.push(`MoM: ${view.momPct.toFixed(1)}%.`)
+    if(view?.yoyPct !== null) tips.push(`YoY: ${view.yoyPct.toFixed(1)}%.`)
 
     const todo = actions.map(a => `• [${a.priority}] ${a.title} (uplift atteso ${a.expected_uplift_pct}%)`)
     return {tips, todo}
@@ -142,25 +121,17 @@ export default function Home(){
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
     const scale = 2
-
-    // titolo / branding
-    doc.setFontSize(18)
-    doc.text('DataPredictor — Report', 24, 32)
-    doc.setFontSize(11)
-    doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 24, 48)
-
-    // snapshot sezione report
+    doc.setFontSize(18); doc.text('DataPredictor — Report', 24, 32)
+    doc.setFontSize(11); doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 24, 48)
     const canvas = await html2canvas(reportRef.current, {scale})
     const imgData = canvas.toDataURL('image/png')
     const pageWidth = doc.internal.pageSize.getWidth() - 40
     const ratio = pageWidth / canvas.width
     const imgHeight = canvas.height * ratio
     doc.addImage(imgData, 'PNG', 20, 64, pageWidth, imgHeight)
-
     doc.save('DataPredictor_Report.pdf')
   }
 
-  // Auth (solo se Supabase configurato)
   const signIn = async(email)=>{
     if(!supabase) return alert('Supabase non configurato')
     const { error } = await supabase.auth.signInWithOtp({ email })
@@ -173,9 +144,8 @@ export default function Home(){
       <main className="container">
         <h1>DataPredictor</h1>
 
-        {/* Upload + Periodo + PDF */}
         <section className="toolbar" style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap', marginBottom:12}}>
-          <input type="file" accept=".csv,.xlsx" onChange={e=>setFile(e.target.files?.[0]||null)} />
+          <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>setError('')} />
           <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
 
           <div style={{marginLeft:16}}>
@@ -187,7 +157,6 @@ export default function Home(){
 
           <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
 
-          {/* Auth (opzionale) */}
           {!supabase ? null : (
             <div style={{marginLeft:'auto'}}>
               <input type="email" placeholder="email per login" id="emailbox" />
@@ -197,42 +166,36 @@ export default function Home(){
         </section>
         {error && <p style={{color:'#b00020'}}>{error}</p>}
 
-        {/* Report container per PDF */}
         <section ref={reportRef}>
           {rawRes && (
             <>
-              {/* KPI */}
               <section className="kpis" style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:12,margin:'16px 0'}}>
-                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {kpi.revenue_30d?.toLocaleString?.('it-IT') ?? kpi.revenue_30d}</div></div>
-                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{kpi.orders_days_positive_30d}</div></div>
-                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {kpi.avg_ticket?.toFixed?.(2) ?? kpi.avg_ticket}</div></div>
+                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
+                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
+                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {rawRes.kpi?.avg_ticket?.toFixed?.(2) ?? rawRes.kpi?.avg_ticket}</div></div>
                 <div className="card">
                   <div className="kpi-title">Trend 2w vs 2w</div>
-                  <div className={`kpi-value ${kpi.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{kpi.trend_last_2w_vs_prev_2w_pct}%</div>
+                  <div className={`kpi-value ${rawRes.kpi?.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{rawRes.kpi?.trend_last_2w_vs_prev_2w_pct}%</div>
                 </div>
               </section>
 
-              {/* Add-on YoY/MoM */}
               <section style={{display:'flex',gap:16,flexWrap:'wrap',margin:'8px 0'}}>
                 <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
                 <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
               </section>
 
-              {/* Chart */}
               <section className="chart-wrap">
                 <h3>Ricavi giornalieri</h3>
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
-              {/* Advisor */}
               <section className="advisor">
                 <h3>Advisor</h3>
-                <ul>{advisor?.tips?.map((t,i)=><li key={i}>{t}</li>)}</ul>
+                <ul>{(advisor?.tips||[]).map((t,i)=><li key={i}>{t}</li>)}</ul>
                 <h4>To-do operativo</h4>
                 <pre className="box">{(advisor?.todo||[]).join('\n')}</pre>
               </section>
 
-              {/* Azioni consigliate (dal backend) */}
               <section className="actions">
                 <h3>Azioni consigliate</h3>
                 {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
@@ -244,7 +207,6 @@ export default function Home(){
           )}
         </section>
 
-        {/* JSON raw opzionale */}
         {rawRes && (
           <details>
             <summary>Vedi JSON</summary>
@@ -263,7 +225,6 @@ export default function Home(){
         .kpi-value.pos { color:#059669; } .kpi-value.neg { color:#dc2626; }
         .chart-box { position:relative; height:320px; border:1px solid #e5e7eb; border-radius:10px; padding:8px; background:#fff; }
         .box { background:#f7f7f7; padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
-        .advisor ul { margin: 8px 0; }
       `}</style>
     </>
   )
