@@ -9,10 +9,9 @@ import html2canvas from 'html2canvas'
 import { supabase } from '../lib/supabaseClient'
 
 const BRAND = {
-  name: 'DataPredictor',
-  color: '#0ea5e9',           // azzurro brand
-  text:  '#0b5d7b',           // testo scuro per header
-  logoPath: '/logo.svg',      // in public/
+  name: process.env.NEXT_PUBLIC_BRAND_NAME || 'DataPredictor',
+  color: process.env.NEXT_PUBLIC_BRAND_COLOR || '#0ea5e9',
+  logoPath: process.env.NEXT_PUBLIC_BRAND_LOGO  || '/logo.svg',
 }
 
 const PERIODS = [
@@ -34,7 +33,7 @@ export default function Home(){
 
   const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000' })
 
-  // Carica analisi salvata da Supabase quando si arriva con ?analysisId
+  // Se arrivo con ?analysisId carico l’analisi salvata
   useEffect(()=>{
     const { analysisId } = router.query || {}
     if(!analysisId || !supabase) return
@@ -81,7 +80,7 @@ export default function Home(){
     }finally{ setLoading(false) }
   }
 
-  // Deriva timeseries per periodo + MoM/YoY
+  // Serie filtrata + MoM/YoY
   const view = useMemo(()=>{
     if(!rawRes?.timeseries) return null
     const ts = rawRes.timeseries.map(p => ({...p, d: new Date(p.date)}))
@@ -103,7 +102,7 @@ export default function Home(){
     return { current, revenue, momPct, yoyPct, end }
   }, [rawRes, period])
 
-  // Disegna grafico
+  // Grafico
   useEffect(()=>{
     if(!view?.current || !canvasRef.current) return
     const labels = view.current.map(p => p.date)
@@ -139,7 +138,7 @@ export default function Home(){
     return {tips, todo}
   }, [rawRes, actions, kpi, view])
 
-  // Util: carica immagine come dataURL
+  // Utils: dataURL per logo
   const fetchDataURL = async (path) => {
     const res = await fetch(path)
     const blob = await res.blob()
@@ -150,18 +149,18 @@ export default function Home(){
     })
   }
 
-  // Export PDF con header brand + logo
+  // PDF con header brand
   const exportPDF = async()=>{
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
     const pageWidth = doc.internal.pageSize.getWidth()
-    // Header color bar
+
     doc.setFillColor(BRAND.color)
     doc.rect(0, 0, pageWidth, 56, 'F')
-    // Logo + titolo
+
     try {
       const logoData = await fetchDataURL(BRAND.logoPath)
-      doc.addImage(logoData, 'SVG', 18, 12, 32, 32) // SVG support; se PNG cambia in 'PNG'
+      doc.addImage(logoData, 'SVG', 18, 12, 32, 32)
     } catch {}
     doc.setTextColor('#ffffff')
     doc.setFontSize(18)
@@ -169,7 +168,6 @@ export default function Home(){
     doc.setFontSize(11)
     doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
 
-    // Snapshot contenuto
     const canvas = await html2canvas(reportRef.current, {scale: 2})
     const imgData = canvas.toDataURL('image/png')
     const margin = 20
@@ -181,26 +179,18 @@ export default function Home(){
     doc.save('DataPredictor_Report.pdf')
   }
 
-  // Login via magic link (già presente topbar per badge/Logout)
-  const signIn = async(email)=>{
-    if(!supabase) return alert('Supabase non configurato')
-    const { error } = await supabase.auth.signInWithOtp({ email })
-    if(error) alert(error.message); else alert('Email inviata. Controlla la posta.')
-  }
-
   return (
     <>
       <Head><title>{BRAND.name}</title></Head>
       <main className="container">
         <h1>{BRAND.name}</h1>
 
-        {/* Toolbar */}
-        <section className="toolbar" style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap', marginBottom:12}}>
+        <section className="toolbar">
           <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>setError('')} />
           <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
 
-          <div style={{marginLeft:16}}>
-            <label style={{marginRight:8}}>Periodo:</label>
+          <div className="period">
+            <label>Periodo:</label>
             <select value={period} onChange={e=>setPeriod(e.target.value)}>
               {PERIODS.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
@@ -208,46 +198,33 @@ export default function Home(){
 
           <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
 
-          <Link href="/history" style={{marginLeft:16, color:BRAND.color}}>Storico Analisi</Link>
-
-          {/* Accesso rapido (facoltativo, topbar mostra badge) */}
-          {!supabase ? null : (
-            <div style={{marginLeft:'auto'}}>
-              <input type="email" placeholder="email per login" id="emailbox" />
-              <button onClick={()=>signIn(document.getElementById('emailbox').value)}>Login link</button>
-            </div>
-          )}
+          <Link href="/history" className="link">Storico Analisi</Link>
         </section>
-        {error && <p style={{color:'#b00020'}}>{error}</p>}
+        {error && <p className="error">{error}</p>}
 
-        {/* Report area (inclusa nel PDF) */}
         <section ref={reportRef}>
           {rawRes && (
             <>
-              {/* KPI */}
-              <section className="kpis" style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:12,margin:'16px 0'}}>
-                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
-                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
-                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {rawRes.kpi?.avg_ticket?.toFixed?.(2) ?? rawRes.kpi?.avg_ticket}</div></div>
+              <section className="kpis">
+                <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {kpi.revenue_30d?.toLocaleString?.('it-IT') ?? kpi.revenue_30d}</div></div>
+                <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{kpi.orders_days_positive_30d}</div></div>
+                <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {kpi.avg_ticket?.toFixed?.(2) ?? kpi.avg_ticket}</div></div>
                 <div className="card">
                   <div className="kpi-title">Trend 2w vs 2w</div>
-                  <div className={`kpi-value ${rawRes.kpi?.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{rawRes.kpi?.trend_last_2w_vs_prev_2w_pct}%</div>
+                  <div className={`kpi-value ${kpi.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{kpi.trend_last_2w_vs_prev_2w_pct}%</div>
                 </div>
               </section>
 
-              {/* MoM / YoY */}
-              <section style={{display:'flex',gap:16,flexWrap:'wrap',margin:'8px 0'}}>
+              <section className="diff">
                 <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
                 <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
               </section>
 
-              {/* Chart */}
               <section className="chart-wrap">
                 <h3>Ricavi giornalieri</h3>
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
-              {/* Advisor */}
               <section className="advisor">
                 <h3>Advisor</h3>
                 <ul>{(advisor?.tips||[]).map((t,i)=><li key={i}>{t}</li>)}</ul>
@@ -255,19 +232,17 @@ export default function Home(){
                 <pre className="box">{(advisor?.todo||[]).join('\n')}</pre>
               </section>
 
-              {/* Azioni dal backend */}
               <section className="actions">
                 <h3>Azioni consigliate</h3>
                 {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
                 <ol>
-                  {(rawRes.actions||[]).map((a,i)=>(<li key={i}><b>{a.title}</b> — impatto atteso {a.expected_uplift_pct}% — priorità {a.priority}</li>))}
+                  {(actions||[]).map((a,i)=>(<li key={i}><b>{a.title}</b> — impatto atteso {a.expected_uplift_pct}% — priorità {a.priority}</li>))}
                 </ol>
               </section>
             </>
           )}
         </section>
 
-        {/* JSON raw */}
         {rawRes && (
           <details>
             <summary>Vedi JSON</summary>
@@ -278,14 +253,24 @@ export default function Home(){
 
       <style jsx>{`
         .container { padding:24px; max-width:1000px; margin:0 auto; font-family:system-ui,-apple-system,Segoe UI,Roboto }
-        button { margin-left:12px; padding:8px 14px; background:${BRAND.color}; color:#fff; border:0; border-radius:6px; cursor:pointer }
+        h1 { margin: 12px 0 8px }
+        .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px }
+        .period { margin-left:16px; display:flex; gap:8px; align-items:center }
+        button { margin-left:12px; padding:8px 14px; background: var(--brand); color:#fff; border:0; border-radius:6px; cursor:pointer }
         button:disabled { opacity:.6; cursor:default }
-        .kpis .card { padding:14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff }
-        .kpi-title { color:#6b7280; font-size:13px; }
+        .link { margin-left:16px; color: var(--brand); text-decoration:none }
+        .error { color: var(--error); margin-top:8px; }
+
+        .kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin: 16px 0; }
+        .card { padding:14px; border:1px solid var(--border); border-radius:10px; background: var(--card-bg); }
+        .kpi-title { color: var(--muted); font-size:13px; }
         .kpi-value { font-size:20px; font-weight:600; margin-top:6px; }
         .kpi-value.pos { color:#059669; } .kpi-value.neg { color:#dc2626; }
-        .chart-box { position:relative; height:320px; border:1px solid #e5e7eb; border-radius:10px; padding:8px; background:#fff; }
-        .box { background:#f7f7f7; padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
+
+        .diff { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0; color: var(--text) }
+
+        .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:10px; padding:8px; background: var(--card-bg); }
+        .box { background: var(--code-bg); color: var(--code-fg); padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
       `}</style>
     </>
   )
