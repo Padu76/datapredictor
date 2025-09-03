@@ -1,6 +1,6 @@
 // apps/web/components/AdvisorReport.jsx
-// Componente UI per mostrare un report consulenziale in modo elegante.
-// Usa: <AdvisorReport kpi={...} reportLLM={stringa_opzionale} playbooks={...} />
+// Report consulenziale: font moderno, testo grande, riquadri eleganti.
+// Nessuna dipendenza esterna.
 
 const brandColor = process.env.NEXT_PUBLIC_BRAND_COLOR || "#f97316";
 
@@ -38,7 +38,7 @@ function cleanText(text = "") {
   return dedup.join("\n");
 }
 
-// Se non vuoi usare il testo LLM, costruiamo un paragrafo discorsivo dai KPI
+// Se manca il testo LLM, costruisce una narrativa base dai KPI
 function buildNarrativeFromKPI(kpi = {}) {
   const {
     revenue_30d,
@@ -52,8 +52,7 @@ function buildNarrativeFromKPI(kpi = {}) {
   const parts = [];
 
   parts.push(
-    `Negli ultimi 30 giorni hai generato ${Euro(revenue_30d)} di ricavi distribuiti su ${days_with_sales ?? "—"} giornate con vendite. ` +
-      `Il ticket medio è ${Euro(avg_ticket, 2)}.`
+    `Negli ultimi 30 giorni hai generato ${Euro(revenue_30d)} di ricavi, distribuiti su ${days_with_sales ?? "—"} giornate con vendite. Il ticket medio è ${Euro(avg_ticket, 2)}.`
   );
 
   if (trend_last_2w_vs_prev_2w_pct != null) {
@@ -69,8 +68,7 @@ function buildNarrativeFromKPI(kpi = {}) {
     parts.push(
       `Guardando avanti, il forecast a 30 giorni stima ${Euro(
         forecast_30d
-      )}. ` +
-        `Ha senso preparare capacità operativa (stock, customer care, consegne) per sostenere il volume.`
+      )}. Ha senso preparare capacità operativa (stock, customer care, consegne) per sostenere il volume.`
     );
   }
 
@@ -85,11 +83,10 @@ function buildNarrativeFromKPI(kpi = {}) {
   }
 
   parts.push(
-    `Il piano pratico: spingi ciò che già funziona e, in parallelo, testa ottimizzazioni leggere (A/B test su prezzo o bundle, promozioni sostenibili). ` +
-      `Imposta soglie minime di margine e un alert scorte per evitare stock-out.`
+    `Piano pratico: spingi ciò che funziona e, in parallelo, testa ottimizzazioni leggere (A/B test su prezzo o bundle, promozioni sostenibili). Imposta soglie minime di margine e un alert scorte per evitare stock-out.`
   );
 
-  return parts.join(" ");
+  return parts.join("\n\n");
 }
 
 export default function AdvisorReport({
@@ -122,14 +119,20 @@ export default function AdvisorReport({
     { label: "Mantieni strategia, test A/B prezzo o bundle", impact: "≈ +1%", priority: "low" },
   ],
 }) {
-  const narrative =
-    reportLLM?.trim() ? cleanText(reportLLM) : buildNarrativeFromKPI(kpi);
+  // Testo finale (LLM pulito oppure narrativa da KPI)
+  const narrative = (reportLLM?.trim() ? cleanText(reportLLM) : buildNarrativeFromKPI(kpi))
+    .split(/\n{2,}/); // spezza in paragrafi vuoto-vuoto
 
   return (
-    <section className="max-w-5xl mx-auto">
+    <section className="max-w-6xl mx-auto font-sans"> {/* forza font moderno */}
       {/* Header + CTA */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-3xl md:text-4xl font-extrabold">Report consulenziale</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2
+          className="text-3xl md:text-4xl font-extrabold tracking-tight"
+          style={{ color: brandColor }}
+        >
+          Report consulenziale
+        </h2>
         <button
           type="button"
           className="px-4 py-2 rounded-xl text-white font-semibold shadow"
@@ -140,44 +143,55 @@ export default function AdvisorReport({
         </button>
       </div>
 
-      {/* Blocco discorsivo */}
-      <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8 mb-6">
-        <h3 className="text-2xl font-bold mb-4" style={{ color: brandColor }}>
+      {/* Card principale del testo */}
+      <div className="rounded-2xl shadow-lg p-8 md:p-10 bg-white dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800/60">
+        <h3 className="text-2xl md:text-3xl font-bold mb-6" style={{ color: brandColor }}>
           Panoramica operativa
         </h3>
-        <p className="text-lg leading-8 text-gray-800 whitespace-pre-line">
-          {narrative}
-        </p>
-      </div>
 
-      {/* KPI riassuntivi */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-gray-50 rounded-xl p-4 text-center">
-          <div className="text-sm text-gray-500">Ricavi 30gg</div>
-          <div className="text-2xl font-extrabold">{Euro(kpi.revenue_30d)}</div>
+        {/* Paragrafi grandi e leggibili */}
+        <div className="space-y-5">
+          {narrative.map((para, i) => (
+            <p key={i} className="text-xl md:text-2xl leading-relaxed text-zinc-800 dark:text-zinc-100">
+              {para}
+            </p>
+          ))}
         </div>
-        <div className="bg-gray-50 rounded-xl p-4 text-center">
-          <div className="text-sm text-gray-500">Giorni con vendite</div>
-          <div className="text-2xl font-extrabold">{kpi.days_with_sales ?? "—"}</div>
-        </div>
-        <div className="bg-gray-50 rounded-xl p-4 text-center">
-          <div className="text-sm text-gray-500">Ticket medio</div>
-          <div className="text-2xl font-extrabold">{Euro(kpi.avg_ticket, 2)}</div>
-        </div>
-        <div className="bg-gray-50 rounded-xl p-4 text-center">
-          <div className="text-sm text-gray-500">Trend 2w vs prev.</div>
-          <div className="text-2xl font-extrabold text-green-600">
-            {Pct(kpi.trend_last_2w_vs_prev_2w_pct)}
+
+        {/* KPI riassuntivi dentro il riquadro */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+          <div className="rounded-xl p-4 text-center bg-zinc-50 dark:bg-zinc-800">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">Ricavi 30gg</div>
+            <div className="text-2xl md:text-3xl font-extrabold">{Euro(kpi.revenue_30d)}</div>
+          </div>
+          <div className="rounded-xl p-4 text-center bg-zinc-50 dark:bg-zinc-800">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">Giorni con vendite</div>
+            <div className="text-2xl md:text-3xl font-extrabold">{kpi.days_with_sales ?? "—"}</div>
+          </div>
+          <div className="rounded-xl p-4 text-center bg-zinc-50 dark:bg-zinc-800">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">Ticket medio</div>
+            <div className="text-2xl md:text-3xl font-extrabold">{Euro(kpi.avg_ticket, 2)}</div>
+          </div>
+          <div className="rounded-xl p-4 text-center bg-zinc-50 dark:bg-zinc-800">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">Trend 2w vs prev.</div>
+            <div className="text-2xl md:text-3xl font-extrabold text-emerald-600">
+              {Pct(kpi.trend_last_2w_vs_prev_2w_pct)}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Playbooks */}
-      <div className="grid md:grid-cols-3 gap-4 mb-6">
+      <div className="grid md:grid-cols-3 gap-6 mt-8">
         {Object.entries(playbooks).map(([title, items]) => (
-          <div key={title} className="bg-white rounded-2xl shadow p-6">
-            <h4 className="text-xl font-semibold mb-3">{`Playbook ${title}`}</h4>
-            <ul className="list-disc ml-6 space-y-1 text-gray-700">
+          <div
+            key={title}
+            className="rounded-2xl shadow p-6 bg-white dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800/60"
+          >
+            <h4 className="text-xl md:text-2xl font-semibold mb-3" style={{ color: brandColor }}>
+              Playbook {title}
+            </h4>
+            <ul className="list-disc ml-6 space-y-2 text-lg md:text-xl text-zinc-800 dark:text-zinc-200">
               {items.map((it, i) => (
                 <li key={i}>{it}</li>
               ))}
@@ -187,18 +201,22 @@ export default function AdvisorReport({
       </div>
 
       {/* Azioni consigliate */}
-      <div className="bg-white rounded-2xl shadow p-6">
-        <h4 className="text-xl font-semibold mb-3">Azioni consigliate</h4>
-        <ol className="list-decimal ml-6 space-y-2">
-          {actions.map((a, i) => (
-            <li key={i}>
-              <span className="font-semibold">{a.label}</span>
-              {a.impact ? ` — impatto atteso ${a.impact}` : ""}{" "}
-              {a.priority ? `— priorità ${a.priority}` : ""}
-            </li>
-          ))}
-        </ol>
-      </div>
+      {actions && actions.length > 0 && (
+        <div className="rounded-2xl shadow p-6 bg-white dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800/60 mt-6">
+          <h4 className="text-xl md:text-2xl font-semibold mb-3" style={{ color: brandColor }}>
+            Azioni consigliate
+          </h4>
+          <ol className="list-decimal ml-6 space-y-3 text-lg md:text-xl text-zinc-800 dark:text-zinc-100">
+            {actions.map((a, i) => (
+              <li key={i}>
+                <span className="font-semibold">{a.label || a.title}</span>
+                {a.impact ? ` — impatto atteso ${a.impact}` : ""}
+                {a.priority ? ` — priorità ${a.priority}` : ""}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </section>
   );
 }
