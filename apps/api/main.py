@@ -1,7 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os, io, csv
+import os, io, csv, json
 from datetime import datetime, timedelta
 from statistics import mean
 
@@ -9,7 +9,7 @@ from statistics import mean
 allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS","http://localhost:3000").split(",") if o.strip()]
 allow_origin_regex = os.getenv("ALLOW_ORIGIN_REGEX", r"^https://.*\.vercel\.app$")
 
-app = FastAPI(title="DataPredictor API – CSV/XLSX + Advisor")
+app = FastAPI(title="DataPredictor API – CSV/XLSX + Advisor + Mapping")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -28,23 +28,32 @@ DATE_CANDS = ["date","data","giorno","timestamp","order_date","created_at"]
 AMOUNT_CANDS = ["amount","revenue","ricavo","price","prezzo","total","totale","valore"]
 QTY_CANDS = ["qty","quantita","quantity","qta"]
 
-def find_col(header, candidates):
-    low = [h.lower() for h in header]
-    for c in candidates:
-        if c in low:
-            return header[low.index(c)]
-    return None
-
-def to_float(x):
+def to_float(x, decimal=","):
     if x is None: return 0.0
-    s = str(x).strip().replace("€","").replace(" ", "").replace(",", ".")
+    s = str(x).strip().replace("€","").replace(" ", "")
+    # normalizza separatore decimale
+    if decimal == ",":
+        s = s.replace(".", "").replace(",", ".")
     try: return float(s)
     except: return 0.0
 
-def parse_date(x):
+def parse_date(x, fmt=None):
+    if x is None: return None
     s = str(x).strip()
-    for fmt in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%m/%d/%Y","%Y/%m/%d","%Y-%m-%d %H:%M:%S"):
-        try: return datetime.strptime(s, fmt)
+    if fmt:
+        # Supporto basi comuni
+        fmt = fmt.strip()
+        try:
+            # Mappine friendly
+            if fmt.upper() == "DD/MM/YYYY": fmt = "%d/%m/%Y"
+            if fmt.upper() == "YYYY-MM-DD": fmt = "%Y-%m-%d"
+            if fmt.upper() == "MM/DD/YYYY": fmt = "%m/%d/%Y"
+            return datetime.strptime(s, fmt)
+        except:
+            pass
+    # fallback: autodetect
+    for f in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%m/%d/%Y","%Y/%m/%d","%Y-%m-%d %H:%M:%S"):
+        try: return datetime.strptime(s, f)
         except: pass
     try: return datetime.fromisoformat(s.replace("Z",""))
     except: return None
@@ -67,45 +76,71 @@ def read_xlsx(bytes_content: bytes):
         out.append({header[i]: r[i] for i in range(len(header))})
     return header, out
 
-# --- Analyze endpoint ---
+def pick_col(header, colname, fallbacks):
+    if colname and colname in header:
+        return colname
+    # auto
+    low = [h.lower() for h in header]
+    for c in fallbacks:
+        if c in low:
+            return header[low.index(c)]
+    return None
+
+# -------- Analyze endpoint (con mapping opzionale) --------
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(
+    file: UploadFile = File(...),
+    mapping: str | None = Form(None)   # JSON string opzionale
+):
     fname = file.filename.lower()
     if not (fname.endswith(".csv") or fname.endswith(".xlsx")):
         raise HTTPException(status_code=400, detail="Accettiamo CSV o XLSX.")
     content = await file.read()
-    if fname.endswith(".csv"):
-        header, rows = read_csv(content)
-    else:
-        header, rows = read_xlsx(content)
-
+    header, rows = (read_csv(content) if fname.endswith(".csv") else read_xlsx(content))
     if not rows:
         raise HTTPException(status_code=400, detail="File vuoto o senza header.")
 
-    # colonne principali
-    date_col = find_col(header, DATE_CANDS) or next((c for c in header if c and ("date" in c.lower() or "data" in c.lower() or "time" in c.lower())), None)
+    # --- mapping opzionale ---
+    mapping_obj = None
+    if mapping:
+        try:
+            mapping_obj = json.loads(mapping)
+        except:
+            raise HTTPException(status_code=400, detail="Mapping JSON non valido.")
+
+    # opzioni parse
+    decimal = (mapping_obj.get("options", {}).get("decimal") if mapping_obj else None) or ","
+    date_fmt = (mapping_obj.get("options", {}).get("date_format") if mapping_obj else None)
+
+    # colonne da usare
+    date_col = pick_col(header, (mapping_obj or {}).get("date"), DATE_CANDS)
     if not date_col:
-        raise HTTPException(status_code=400, detail="Nessuna colonna data trovata (es. 'date').")
-    amount_col = find_col(header, AMOUNT_CANDS)
-    price_col = find_col(header, ["price","prezzo","unit_price","unitprice"])
-    qty_col = find_col(header, QTY_CANDS)
+        raise HTTPException(status_code=400, detail="Colonna 'date' non trovata o non mappata.")
+    amount_col = pick_col(header, (mapping_obj or {}).get("amount"), AMOUNT_CANDS)
+    price_col  = pick_col(header, (mapping_obj or {}).get("price"),  ["price","prezzo","unit_price","unitprice"])
+    qty_col    = pick_col(header, (mapping_obj or {}).get("qty"),    QTY_CANDS)
+
+    if not amount_col and not (price_col and qty_col):
+        # se non c'è amount e neanche price+qty: fallback al conteggio ordini (=1)
+        pass
 
     # aggrega per giorno
     daily = {}
     for r in rows:
-        d = parse_date(r.get(date_col))
-        if not d: continue
+        d = parse_date(r.get(date_col), fmt=date_fmt)
+        if not d: 
+            continue
         if amount_col:
-            amt = to_float(r.get(amount_col))
+            amt = to_float(r.get(amount_col), decimal=decimal)
         elif price_col and qty_col:
-            amt = to_float(r.get(price_col)) * to_float(r.get(qty_col))
+            amt = to_float(r.get(price_col), decimal=decimal) * to_float(r.get(qty_col), decimal=decimal)
         else:
-            amt = 1.0  # fallback: conta come ordine
+            amt = 1.0
         day = datetime(d.year, d.month, d.day)
         daily[day] = daily.get(day, 0.0) + amt
 
     if not daily:
-        raise HTTPException(status_code=400, detail="Nessuna riga valida dopo il parsing.")
+        raise HTTPException(status_code=400, detail="Nessuna riga valida dopo il parsing (controlla mapping e formati).")
 
     # completa giorni mancanti
     start, end = min(daily.keys()), max(daily.keys())
@@ -180,12 +215,12 @@ async def analyze(file: UploadFile = File(...)):
         "timeseries": timeseries
     }
 
-# -------- Advisor LLM Pro --------
+# -------- Advisor LLM Pro (come prima) --------
 class AdvisorPayload(BaseModel):
     analysis: dict
-    context: dict | None = None  # es: {"period":"30", "mom_pct":..., "yoy_pct":...}
+    context: dict | None = None
 
-def rule_based_advisor(a: dict, ctx: dict | None) -> tuple[str, dict]:
+def rule_based_advisor(a: dict, ctx: dict | None):
     kpi = a.get("kpi", {})
     forecast = a.get("forecast", {})
     anomalies = a.get("anomalies", [])
@@ -203,87 +238,56 @@ def rule_based_advisor(a: dict, ctx: dict | None) -> tuple[str, dict]:
     if mom is not None: lines.append(f"• Variazione MoM stimata sul periodo selezionato: {round(mom,1)}%.")
     if yoy is not None: lines.append(f"• Variazione YoY stimata sul periodo selezionato: {round(yoy,1)}%.")
 
-    # Interpretazioni
     trend = kpi.get("trend_last_2w_vs_prev_2w_pct", 0)
     fchg = forecast.get("change_vs_last30_pct", 0)
-    if trend > 10:
-        lines.append("La dinamica recente è robusta: spingere ciò che già funziona massimizza il ROI.")
-    elif trend < -5:
-        lines.append("Segnali di raffreddamento: serve un'azione tattica immediata per invertire il trend.")
-    else:
-        lines.append("Stabilità moderata: puntare su efficienza e micro-ottimizzazioni continua.")
-    if fchg < 0:
-        lines.append("Il forecast suggerisce un potenziale rallentamento: ribilanciare stock e domanda.")
-    else:
-        lines.append("Il forecast è positivo: preparare capacità operativa (stock, customer care, consegne).")
+    if trend > 10: lines.append("La dinamica recente è robusta: spingere ciò che già funziona massimizza il ROI.")
+    elif trend < -5: lines.append("Segnali di raffreddamento: serve un'azione tattica immediata per invertire il trend.")
+    else: lines.append("Stabilità moderata: puntare su efficienza e micro-ottimizzazioni continua.")
+    if fchg < 0: lines.append("Il forecast suggerisce un potenziale rallentamento: ribilanciare stock e domanda.")
+    else: lines.append("Il forecast è positivo: preparare capacità operativa (stock, customer care, consegne).")
 
-    # Anomalie
-    if anomalies:
-        lines.append(f"Sono emerse {len(anomalies)} anomalie giornaliere; vanno verificate cause (prezzi, resi, ADS).")
-    else:
-        lines.append("Non risultano anomalie significative: il profilo è coerente nel periodo osservato.")
+    if anomalies: lines.append(f"{len(anomalies)} anomalie da indagare (prezzi, resi, ADS).")
+    else: lines.append("Nessuna anomalia rilevante nel periodo.")
 
-    # Azioni tattiche (da backend)
     if actions:
-        lines.append("Azioni tattiche suggerite dall'algoritmo nel breve:")
+        lines.append("Azioni tattiche (breve):")
         for a_ in actions[:4]:
             lines.append(f"– [{a_.get('priority','')}] {a_.get('title','')} (uplift atteso {a_.get('expected_uplift_pct','?')}%).")
 
-    # Pillars operativi
-    lines.append("Pilastri operativi consigliati:")
-    lines.append("1) Focus su canali/prodotti top performer; 2) Test A/B su prezzo/pacchetti; 3) Ritmo promozionale sostenibile; 4) Riduzione attrito checkout.")
-    lines.append("Pianificare una cadenza di review settimanale con KPI chiari: revenue, conversion, AOV, CAC, LTV (se disponibile).")
-
-    # Backlog esperimenti (esempi pratici)
-    lines.append("Backlog esperimenti (esempi):")
-    lines.append("• Pricing: test ±5–10% su 1–2 SKU core per stimare elasticità.")
-    lines.append("• Bundle/upsell: aggiunta servizio/prodotto complementare con sconto lieve.")
-    lines.append("• Creatività: rotazione asset che hanno generato picchi; raffreddare quelli saturi.")
-    lines.append("• Landing page: prova headline orientata al valore + social proof visibile above the fold.")
-    lines.append("• Retention: email di riattivazione con voucher mirati a clienti dormienti.")
-
-    # Rischi e mitigazioni
-    lines.append("Rischi chiave: sovra-sconto che erode margine; stock-out; saturazione audience paid.")
-    lines.append("Mitigazioni: soglia minima di margine per promo; monitor early warning stock; refresh audience e creatività.")
-
-    # KPI target
-    lines.append("Target orientativi (da adattare): +8–12% ricavi a 30gg, AOV +3–5%, CAC stabile o in calo, churn in miglioramento se CRM attivo.")
-
-    # chiusura
-    lines.append("Conclusione: applicare le azioni prioritarie nei prossimi 7 giorni e preparare piano a 30/90 giorni.")
-
-    # Assicurati di restituire ~25–30 righe
+    lines.append("Pilastri: 1) Focus top performer; 2) Test A/B prezzo/pacchetti; 3) Promozioni sostenibili; 4) Checkout fluido.")
+    lines.append("Backlog: pricing ±5–10%; bundle/upsell; refresh creatività; headline orientata al valore; retention a clienti dormienti.")
+    lines.append("Rischi: erosione margine; stock-out; saturazione audience. Mitigazioni: soglie margine, early warning stock, refresh audience.")
+    lines.append("Target: +8–12% ricavi 30gg, AOV +3–5%, CAC stabile o in calo.")
     while len(lines) < 27:
-        lines.append("Nota operativa: tracciare gli impatti per apprendere rapidamente e iterare.")
+        lines.append("Nota operativa: misura gli impatti e iterare rapidamente.")
     advisor_text = "\n".join(lines)
 
-    # Playbook 7/30/90
     playbook = {
         "7d": [
-            "Diagnosi rapida canali e SKU: conferma driver di revenue.",
-            "Attiva 1 promo tattica su top SKU (max 7gg) con margine protetto.",
-            "Lancia un test A/B prezzo/bundle su un prodotto core.",
-            "Controllo UX: riduci frizioni su checkout (campi, step, tempi).",
-            "Setup dashboard settimanale e alert per anomalie."
+            "Diagnosi driver ricavi (canali/SKU).",
+            "Promo tattica 7gg su top SKU (margine protetto).",
+            "Test A/B prezzo/bundle su 1 prodotto core.",
+            "Snellisci checkout (campi, step).",
+            "Setup alert anomalie."
         ],
         "30d": [
-            "Scala campagne su canali con ROI > soglia e spegni i sotto-performanti.",
-            "Implementa bundle/upsell su 2–3 offerte con forte fit.",
-            "Ottimizza supply: previeni stock-out su best-seller.",
-            "Sequenza email/SMS di retention per dormienti.",
-            "Revisiona prezzi con evidenze da test (elasticità iniziale)."
+            "Scala canali ROI+, spegni i sotto-performanti.",
+            "Bundle/upsell su 2–3 offerte.",
+            "Ottimizza supply per evitare stock-out.",
+            "Sequenza retention su dormienti.",
+            "Revisione prezzo in base ai test."
         ],
         "90d": [
-            "Roadmap creatività + refresh audience per evitare saturazione.",
-            "Pricing strategy per stagionalità: listino e promo calendar.",
-            "Cohort/LTV (se dati cliente disponibili), segmentazione e loyalty.",
-            "Automazioni CRM (winback, cross-sell) basate su comportamento.",
-            "Allinea obiettivi margine e crescita, aggiorna playbook."
+            "Roadmap creatività e audience.",
+            "Listino e promo calendar per stagionalità.",
+            "Cohort/LTV, loyalty e CRM automation.",
+            "Allineamento crescita/margine e aggiornamento playbook.",
+            "Documenta apprendimenti."
         ]
     }
     return advisor_text, playbook
 
-def call_llm(advisor_prompt: str) -> str | None:
+def call_llm(advisor_prompt: str):
     api_key = os.getenv("OPENAI_API_KEY")
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     if not api_key:
@@ -294,22 +298,24 @@ def call_llm(advisor_prompt: str) -> str | None:
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role":"system","content":"Sei un consulente business. Scrivi un report pratico, 25-30 righe, con azioni chiare e tono professionale ma diretto."},
+                {"role":"system","content":"Sei un consulente business. Report pratico, 25-30 righe, azioni chiare, tono diretto."},
                 {"role":"user","content":advisor_prompt}
             ],
             temperature=0.2,
             max_tokens=900,
         )
         return resp.choices[0].message.content.strip()
-    except Exception as e:
-        # fallback in caso di errore API
+    except:
         return None
+
+class AdvisorPayload(BaseModel):
+    analysis: dict
+    context: dict | None = None
 
 @app.post("/advisor")
 async def advisor(payload: AdvisorPayload):
     a = payload.analysis or {}
     ctx = payload.context or {}
-    # Prompt per LLM
     kpi = a.get("kpi", {})
     fc  = a.get("forecast", {})
     an  = a.get("anomalies", [])
@@ -324,16 +330,13 @@ async def advisor(payload: AdvisorPayload):
         f"- Trend 2w vs 2w: {kpi.get('trend_last_2w_vs_prev_2w_pct',0)}%\n"
         f"- Forecast30: €{fc.get('forecast_30d_sum',0)} ({fc.get('change_vs_last30_pct',0)}% vs ultimi30)\n"
         f"- MoM stimato: {mom}% | YoY stimato: {yoy}%\n"
-        f"- Anomalie (giorni): {len(an)}\n"
-        f"- Azioni suggerite: {[ac.get('title') for ac in acts]}\n\n"
-        "Scrivi una analisi discorsiva di 25-30 righe con: lettura dei dati, possibili cause, rischi, e un piano pratico. Linguaggio semplice e diretto."
+        f"- Anomalie: {len(an)}\n"
+        f"- Azioni: {[ac.get('title') for ac in acts]}\n\n"
+        "Scrivi un'analisi discorsiva di 25-30 righe con cause, rischi e piano pratico."
     )
-
     llm_text = call_llm(prompt)
     if llm_text:
-        # Con LLM generiamo playbook anche con regole per coerenza
         _, playbook = rule_based_advisor(a, ctx)
         return {"mode":"llm", "advisor_text": llm_text, "playbook": playbook}
-    # Fallback rule-based
     rb_text, playbook = rule_based_advisor(a, ctx)
     return {"mode":"rule-based", "advisor_text": rb_text, "playbook": playbook}

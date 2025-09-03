@@ -6,6 +6,7 @@ import axios from 'axios'
 import Chart from 'chart.js/auto'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 
 const BRAND = {
@@ -13,12 +14,7 @@ const BRAND = {
   color: process.env.NEXT_PUBLIC_BRAND_COLOR || '#0ea5e9',
   logoPath: process.env.NEXT_PUBLIC_BRAND_LOGO  || '/logo.svg',
 }
-
-const PERIODS = [
-  {key:'7',  label:'7 giorni'},
-  {key:'30', label:'30 giorni'},
-  {key:'90', label:'90 giorni'},
-]
+const PERIODS = [{key:'7',label:'7 giorni'},{key:'30',label:'30 giorni'},{key:'90',label:'90 giorni'}]
 
 export default function Home(){
   const router = useRouter()
@@ -28,8 +24,17 @@ export default function Home(){
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const [advisorLoading,setAdvisorLoading]=useState(false)
-  const [advisorData,setAdvisorData]=useState(null) // {mode, advisor_text, playbook}
-  const [whatIf,setWhatIf]=useState({ priceDelta: 0, elasticity: -1.5, cogsPct: 40 })
+  const [advisorData,setAdvisorData]=useState(null)
+  const [mappingOpen,setMappingOpen]=useState(false)
+  const [headers,setHeaders]=useState([])
+  const [mapping,setMapping]=useState({
+    date:"",
+    amount:"",
+    price:"",
+    qty:"",
+    options:{ date_format:"", decimal:"," }
+  })
+
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
   const reportRef = useRef(null)
@@ -59,6 +64,45 @@ export default function Home(){
     })()
   }, [router.query])
 
+  // Lettura locale header per il wizard (CSV/XLSX)
+  const readHeaders = async (file)=>{
+    const name = file.name.toLowerCase()
+    if(name.endsWith('.csv')){
+      const text = await file.text()
+      const firstLine = text.split(/\r?\n/).filter(Boolean)[0] || ''
+      const cols = firstLine.split(';').length > firstLine.split(',').length ? firstLine.split(';') : firstLine.split(',')
+      setHeaders(cols.map(c=>c.trim()))
+    } else if(name.endsWith('.xlsx')){
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type:'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const json = XLSX.utils.sheet_to_json(ws, { header:1 })
+      const first = json[0] || []
+      setHeaders(first.map(c=>String(c).trim()))
+    } else {
+      setHeaders([])
+    }
+  }
+
+  // Apre wizard mappatura
+  const openMapping = async()=>{
+    setError('')
+    const f = fileRef.current?.files?.[0] || null
+    if(!f){ setError('Seleziona prima un file'); return }
+    await readHeaders(f)
+    // prova auto-suggest minima
+    const lower = (h)=>h?.toLowerCase?.()||''
+    const suggest = (keys)=>headers.find(h=>keys.some(k=>lower(h)===k)) || ''
+    setMapping(m=>({
+      ...m,
+      date: m.date || suggest(['date','data','order date','created_at']),
+      amount: m.amount || suggest(['amount','revenue','ricavo','total','totale','valore']),
+      price: m.price || suggest(['price','prezzo','unit_price']),
+      qty: m.qty || suggest(['qty','quantita','quantity','qta'])
+    }))
+    setMappingOpen(true)
+  }
+
   const onAnalyze = async()=>{
     setError('')
     setAdvisorData(null)
@@ -68,6 +112,11 @@ export default function Home(){
     try{
       const form=new FormData()
       form.append('file', f)
+      // se l'utente ha aperto il wizard e impostato almeno la data, passiamo mapping
+      const hasMapping = mapping?.date || mapping?.amount || (mapping?.price && mapping?.qty)
+      if(hasMapping){
+        form.append('mapping', JSON.stringify(mapping))
+      }
       const r=await api.post('/analyze', form, {headers:{'Content-Type':'multipart/form-data'}})
       setRawRes(r.data)
       if(supabase){
@@ -78,6 +127,7 @@ export default function Home(){
           timeseries_len: (r.data.timeseries||[]).length
         })
       }
+      setMappingOpen(false)
     }catch(e){
       setError(e?.response?.data?.detail || e.message || 'Errore sconosciuto')
     }finally{ setLoading(false) }
@@ -119,52 +169,18 @@ export default function Home(){
     })
   }, [view])
 
-  const kpi = rawRes?.kpi || {}
-  const actions = rawRes?.actions || []
-
-  // Advisor (chiama /advisor – LLM se disponibile, altrimenti rule-based)
+  // Advisor Pro → /advisor
   const generateAdvisor = async()=>{
     if(!rawRes){ setError('Esegui prima un’analisi.'); return }
     setAdvisorLoading(true); setError('')
     try{
-      const ctx = { period, mom_pct: view?.momPct ?? None, yoy_pct: view?.yoyPct ?? None }
+      const ctx = { period, mom_pct: view?.momPct ?? null, yoy_pct: view?.yoyPct ?? null }
       const r = await axios.post(`${apiBase}/advisor`, { analysis: rawRes, context: ctx })
       setAdvisorData(r.data)
     }catch(e){
       setError(e?.response?.data?.detail || e.message || 'Errore generazione advisor')
     }finally{ setAdvisorLoading(false) }
   }
-
-  // What-if pricing (stima semplice)
-  const whatIfResult = useMemo(()=>{
-    if(!kpi?.revenue_30d || !kpi?.avg_ticket) return null
-    const priceDelta = Number(whatIf.priceDelta) / 100     // % variazione prezzo
-    const elasticity = Number(whatIf.elasticity)           # negative typical
-    const cogs = Number(whatIf.cogsPct) / 100
-
-    const baseRevenue = Number(kpi.revenue_30d)
-    const baseAOV = Number(kpi.avg_ticket)
-    const baseOrders = baseAOV > 0 ? baseRevenue / baseAOV : 0
-
-    // volume multiplier con elasticità: Q' = Q * (1 + e * Δp)
-    let volMult = 1 + (elasticity * priceDelta)
-    if (volMult < 0) volMult = 0
-
-    const newPriceMult = 1 + priceDelta
-    const newAOV = baseAOV * newPriceMult
-    const newOrders = baseOrders * volMult
-    const newRevenue = newAOV * newOrders
-
-    // margine: (1 - cogs) * ricavi (assunzione lineare)
-    const baseMargin = baseRevenue * (1 - cogs)
-    const newMargin = newRevenue * (1 - cogs)
-
-    return {
-      newAOV, newOrders, newRevenue, newMargin,
-      deltaRevenuePct: baseRevenue ? ((newRevenue - baseRevenue)/baseRevenue*100) : 0,
-      deltaMarginPct:  baseMargin ? ((newMargin - baseMargin)/baseMargin*100) : 0
-    }
-  }, [kpi, whatIf])
 
   // Utils dataURL per PDF
   const fetchDataURL = async (path) => {
@@ -182,15 +198,10 @@ export default function Home(){
     if(!reportRef.current) return
     const doc = new jsPDF({ unit:'px', format:'a4' })
     const pageWidth = doc.internal.pageSize.getWidth()
-
-    doc.setFillColor(BRAND.color)
-    doc.rect(0, 0, pageWidth, 56, 'F')
-
+    doc.setFillColor(BRAND.color); doc.rect(0, 0, pageWidth, 56, 'F')
     try { const logoData = await fetchDataURL(BRAND.logoPath); doc.addImage(logoData, 'SVG', 18, 12, 32, 32) } catch {}
-    doc.setTextColor('#ffffff')
-    doc.setFontSize(18); doc.text(`${BRAND.name} — Report`, 60, 32)
+    doc.setTextColor('#ffffff'); doc.setFontSize(18); doc.text(`${BRAND.name} — Report`, 60, 32)
     doc.setFontSize(11); doc.text(`Generato: ${new Date().toLocaleString('it-IT')}`, 60, 46)
-
     const canvas = await html2canvas(reportRef.current, {scale: 2})
     const imgData = canvas.toDataURL('image/png')
     const margin = 20, usable = pageWidth - margin*2
@@ -205,9 +216,9 @@ export default function Home(){
       <main className="container">
         <h1>{BRAND.name}</h1>
 
-        {/* Toolbar */}
         <section className="toolbar">
-          <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>setError('')} />
+          <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={()=>{ setError(''); setHeaders([]); }} />
+          <button onClick={openMapping}>Mappa colonne</button>
           <button onClick={onAnalyze} disabled={loading}>{loading?'Analisi...':'Analizza'}</button>
 
           <div className="period">
@@ -218,16 +229,82 @@ export default function Home(){
           </div>
 
           <button onClick={exportPDF} disabled={!rawRes}>Esporta PDF</button>
-
           <Link href="/history" className="link">Storico Analisi</Link>
         </section>
         {error && <p className="error">{error}</p>}
 
-        {/* Report area */}
+        {/* Wizard mappatura */}
+        {mappingOpen && (
+          <div className="modal">
+            <div className="modal-card">
+              <h3>Mappatura colonne</h3>
+              {headers.length===0 ? <p>Seleziona un file per vedere le intestazioni.</p> : (
+                <>
+                  <div className="grid2">
+                    <div>
+                      <label>Data *</label>
+                      <select value={mapping.date} onChange={e=>setMapping({...mapping, date:e.target.value})}>
+                        <option value="">-- seleziona --</option>
+                        {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Amount</label>
+                      <select value={mapping.amount} onChange={e=>setMapping({...mapping, amount:e.target.value})}>
+                        <option value="">-- (oppure usa Prezzo×Qty) --</option>
+                        {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Prezzo (unit)</label>
+                      <select value={mapping.price} onChange={e=>setMapping({...mapping, price:e.target.value})}>
+                        <option value="">-- opzionale --</option>
+                        {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Quantità</label>
+                      <select value={mapping.qty} onChange={e=>setMapping({...mapping, qty:e.target.value})}>
+                        <option value="">-- opzionale --</option>
+                        {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid2">
+                    <div>
+                      <label>Formato data</label>
+                      <select value={mapping.options.date_format} onChange={e=>setMapping({...mapping, options:{...mapping.options, date_format:e.target.value}})}>
+                        <option value="">Auto</option>
+                        <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                        <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                        <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Separatore decimale</label>
+                      <select value={mapping.options.decimal} onChange={e=>setMapping({...mapping, options:{...mapping.options, decimal:e.target.value}})}>
+                        <option value=",">Virgola (,)</option>
+                        <option value=".">Punto (.)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p className="muted" style={{marginTop:8}}>
+                    Minimo richiesto: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>). Se non mappi Amount e neanche Prezzo×Qty, conteremo 1 per ordine.
+                  </p>
+                </>
+              )}
+              <div style={{display:'flex', gap:8, justifyContent:'flex-end', marginTop:12}}>
+                <button className="btn-outline" onClick={()=>setMappingOpen(false)}>Chiudi</button>
+                <button onClick={()=>{ setMappingOpen(false); }}>Ok</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Report */}
         <section ref={reportRef}>
           {rawRes && (
             <>
-              {/* KPI */}
               <section className="kpis">
                 <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
                 <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
@@ -238,19 +315,16 @@ export default function Home(){
                 </div>
               </section>
 
-              {/* MoM / YoY */}
               <section className="diff">
                 <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
                 <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
               </section>
 
-              {/* Chart */}
               <section className="chart-wrap">
                 <h3>Ricavi giornalieri</h3>
                 <div className="chart-box"><canvas ref={canvasRef} /></div>
               </section>
 
-              {/* Advisor Pro */}
               <section className="advisor">
                 <h3>Advisor Pro</h3>
                 <button onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>{advisorLoading ? 'Generazione...' : 'Genera report consulente'}</button>
@@ -276,44 +350,6 @@ export default function Home(){
                 )}
               </section>
 
-              {/* What-if Pricing */}
-              <section className="whatif">
-                <h3>What-if Pricing</h3>
-                <div className="grid">
-                  <div>
-                    <label>Variazione prezzo (%)</label>
-                    <input type="range" min="-20" max="20" step="1"
-                      value={whatIf.priceDelta}
-                      onChange={(e)=>setWhatIf({...whatIf, priceDelta: Number(e.target.value)})}/>
-                    <div>{whatIf.priceDelta}%</div>
-                  </div>
-                  <div>
-                    <label>Elasticità (negativa)</label>
-                    <input type="number" step="0.1" value={whatIf.elasticity}
-                      onChange={e=>setWhatIf({...whatIf, elasticity: Number(e.target.value)})}/>
-                    <div className="muted">es. -1.5: +10% prezzo ⇒ -15% volumi</div>
-                  </div>
-                  <div>
-                    <label>COGS %</label>
-                    <input type="number" step="1" value={whatIf.cogsPct}
-                      onChange={e=>setWhatIf({...whatIf, cogsPct: Number(e.target.value)})}/>
-                    <div className="muted">costo del venduto sul prezzo</div>
-                  </div>
-                </div>
-
-                {whatIfResult ? (
-                  <div className="card" style={{marginTop:12}}>
-                    <div><b>Nuovo AOV</b>: € {whatIfResult.newAOV.toFixed(2)}</div>
-                    <div><b>Ordini stimati (30gg)</b>: {Math.round(whatIfResult.newOrders)}</div>
-                    <div><b>Ricavi stimati (30gg)</b>: € {whatIfResult.newRevenue.toFixed(2)} ({whatIfResult.deltaRevenuePct.toFixed(1)}%)</div>
-                    <div><b>Margine stimato (30gg)</b>: € {whatIfResult.newMargin.toFixed(2)} ({whatIfResult.deltaMarginPct.toFixed(1)}%)</div>
-                    <div className="muted">Modello semplice: non considera vincoli di capacità, stagionalità o mix di prodotto.</div>
-                  </div>
-                ) : (
-                  <p className="muted">Carica un file per attivare il simulatore (servono AOV e Ricavi 30gg).</p>
-                )}
-              </section>
-
               {/* Azioni dal backend */}
               <section className="actions">
                 <h3>Azioni consigliate</h3>
@@ -325,13 +361,6 @@ export default function Home(){
             </>
           )}
         </section>
-
-        {rawRes && (
-          <details>
-            <summary>Vedi JSON</summary>
-            <pre className="box">{JSON.stringify(rawRes,null,2)}</pre>
-          </details>
-        )}
       </main>
 
       <style jsx>{`
@@ -340,7 +369,6 @@ export default function Home(){
         .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px }
         .period { margin-left:16px; display:flex; gap:8px; align-items:center }
         button { margin-left:12px; padding:8px 14px; background: var(--brand); color:#fff; border:0; border-radius:6px; cursor:pointer }
-        button:disabled { opacity:.6; cursor:default }
         .link { margin-left:16px; color: var(--brand); text-decoration:none }
         .error { color: var(--error); margin-top:8px; }
 
@@ -351,13 +379,17 @@ export default function Home(){
         .kpi-value.pos { color:#059669; } .kpi-value.neg { color:#dc2626; }
 
         .diff { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0; color: var(--text) }
-
         .chart-box { position:relative; height:320px; border:1px solid var(--border); border-radius:10px; padding:8px; background: var(--card-bg); }
-
-        .advisor h3, .whatif h3, .actions h3 { margin-top:20px }
-        .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
-        .muted { color: var(--muted); }
         .box { background: var(--code-bg); color: var(--code-fg); padding:12px; border-radius:8px; overflow:auto; margin-top:10px }
+
+        /* Modal */
+        .modal{position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50}
+        .modal-card{ background: var(--bg); color: var(--text); border:1px solid var(--border); border-radius:12px; padding:16px; width:680px; max-width:100% }
+        .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        label{display:block; font-size:13px; color:var(--muted); margin-bottom:4px}
+        select, input[type="number"], input[type="text"]{ width:100%; padding:8px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text) }
+        .btn-outline{ background:transparent; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:8px 12px; cursor:pointer }
+        .muted{ color: var(--muted); }
       `}</style>
     </>
   )

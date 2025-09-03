@@ -12,23 +12,18 @@ const BRAND = {
 export default function MyApp({ Component, pageProps }){
   const [authMsg, setAuthMsg] = useState('')
   const [userEmail, setUserEmail] = useState(null)
-  const [theme, setTheme] = useState('light') // 'light' | 'dark'
+  const [theme, setTheme] = useState('light')
 
-  // Inizializza tema da localStorage
   useEffect(()=>{
     const t = (typeof window !== 'undefined' && localStorage.getItem('dp_theme')) || 'light'
-    setTheme(t)
-    document.documentElement.setAttribute('data-theme', t)
+    setTheme(t); document.documentElement.setAttribute('data-theme', t)
   }, [])
-
   const toggleTheme = ()=>{
     const next = theme === 'light' ? 'dark' : 'light'
-    setTheme(next)
-    document.documentElement.setAttribute('data-theme', next)
+    setTheme(next); document.documentElement.setAttribute('data-theme', next)
     if (typeof window !== 'undefined') localStorage.setItem('dp_theme', next)
   }
 
-  // Pulisce hash supabase al primo accesso
   useEffect(()=>{
     const hasTokens = typeof window !== 'undefined' && window.location.hash?.includes('access_token')
     if (hasTokens) {
@@ -43,7 +38,6 @@ export default function MyApp({ Component, pageProps }){
     }
   }, [])
 
-  // Sessione + badge email
   useEffect(()=>{
     if(!supabase) return
     ;(async ()=>{ const { data } = await supabase.auth.getSession(); setUserEmail(data?.session?.user?.email || null) })()
@@ -55,6 +49,13 @@ export default function MyApp({ Component, pageProps }){
   }, [])
 
   const logout = async ()=>{ if(supabase) await supabase.auth.signOut() }
+  const signIn = async()=>{
+    if(!supabase) return alert('Supabase non configurato')
+    const email = document.getElementById('emailbox-top')?.value
+    if(!email) return alert('Inserisci un’email')
+    const { error } = await supabase.auth.signInWithOtp({ email })
+    if(error) alert(error.message); else alert('Email inviata. Controlla la posta.')
+  }
 
   return (
     <>
@@ -64,7 +65,6 @@ export default function MyApp({ Component, pageProps }){
         <title>{BRAND.name}</title>
       </Head>
 
-      {/* Top bar brand + tema + badge login */}
       <div className="topbar">
         <div className="brand">
           <img src={BRAND.logo} alt="Logo" width={20} height={20} />
@@ -78,20 +78,17 @@ export default function MyApp({ Component, pageProps }){
               <button className="btn-danger" onClick={logout}>Logout</button>
             </>
           ) : (
-            <span className="muted">non autenticato</span>
+            <>
+              <input id="emailbox-top" type="email" placeholder="email per login" className="input" />
+              <button className="btn-outline" onClick={signIn}>Login link</button>
+              <span className="muted">non autenticato</span>
+            </>
           )}
         </div>
       </div>
 
       {authMsg && (<div className="notice-ok">{authMsg}</div>)}
-
-      {/* CSS variables brand */}
-      <style jsx global>{`
-        :root {
-          --brand: ${BRAND.color};
-        }
-      `}</style>
-
+      <style jsx global>{`:root{ --brand: ${BRAND.color}; }`}</style>
       <Component {...pageProps} />
     </>
   )
