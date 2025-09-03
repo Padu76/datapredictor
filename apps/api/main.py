@@ -1,15 +1,20 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import os, io, csv
+import os, io, csv, re
 from datetime import datetime, timedelta
 from statistics import mean
 
-ALLOWED = [o.strip() for o in os.getenv("ALLOWED_ORIGINS","http://localhost:3000").split(",")]
+# Env:
+# ALLOWED_ORIGINS       -> lista separata da virgole (es. http://localhost:3000,https://datapredictor.vercel.app)
+# ALLOW_ORIGIN_REGEX    -> regex opzionale (es. ^https://.*\.vercel\.app$)
+allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS","http://localhost:3000").split(",") if o.strip()]
+allow_origin_regex = os.getenv("ALLOW_ORIGIN_REGEX", r"^https://.*\.vercel\.app$")  # default: qualsiasi subdominio vercel.app
 
 app = FastAPI(title="DataPredictor API – MVP (no pandas)")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED,
+    allow_origins=allowed_origins,
+    allow_origin_regex=allow_origin_regex,   # <-- gestisce automaticamente preview/prod su vercel.app
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,8 +38,7 @@ def find_col(header, candidates):
 def to_float(x):
     if x is None:
         return 0.0
-    s = str(x).strip().replace("€","").replace(" ", "")
-    s = s.replace(",", ".")
+    s = str(x).strip().replace("€","").replace(" ", "").replace(",", ".")
     try:
         return float(s)
     except:
@@ -76,7 +80,7 @@ async def analyze(file: UploadFile = File(...)):
     daily = {}
     for r in rows:
         d = parse_date(r.get(date_col))
-        if not d:
+        if not d:  # salta righe senza data valida
             continue
         if amount_col:
             amt = to_float(r.get(amount_col))
@@ -90,34 +94,34 @@ async def analyze(file: UploadFile = File(...)):
     if not daily:
         raise HTTPException(status_code=400, detail="Nessuna riga valida dopo il parsing.")
 
-    start = min(daily.keys())
-    end = max(daily.keys())
-    curr = start
-    series = []
+    # completa giorni mancanti
+    start = min(daily.keys()); end = max(daily.keys())
+    curr = start; series = []
     while curr <= end:
         series.append((curr, float(daily.get(curr, 0.0))))
         curr += timedelta(days=1)
 
-    end_day = end
-    start_30 = end_day - timedelta(days=29)
-    last30 = [(d,v) for d,v in series if d >= start_30]
+    # KPI 30gg
+    last30 = [(d,v) for d,v in series if d >= (end - timedelta(days=29))]
     revenue_30 = sum(v for _,v in last30)
     orders_days = sum(1 for _,v in last30 if v > 0)
     avg_ticket = (revenue_30 / orders_days) if orders_days else 0.0
 
-    last30_vals = [v for _,v in last30]
-    recent = last30_vals[-14:] if len(last30_vals)>=14 else last30_vals
-    prev = last30_vals[-28:-14] if len(last30_vals)>=28 else last30_vals[:max(len(last30_vals)-14,1)]
+    # Trend 2 settimane vs precedenti 2
+    vals = [v for _,v in last30]
+    recent = vals[-14:] if len(vals)>=14 else vals
+    prev   = vals[-28:-14] if len(vals)>=28 else vals[:max(len(vals)-14,1)]
     w2_recent = mean(recent) if recent else 0.0
-    w2_prev = mean(prev) if prev else 0.0
+    w2_prev   = mean(prev) if prev else 0.0
     trend_pct = ((w2_recent - w2_prev)/w2_prev*100.0) if w2_prev else 0.0
 
+    # Forecast semplice (media ultimi N)
     window = 28 if len(series)>=28 else max(7, len(series))
-    base_vals = [v for _,v in series][-window:]
-    base = mean(base_vals) if base_vals else 0.0
+    base = mean([v for _,v in series][-window:]) if series else 0.0
     forecast_30_sum = base * 30.0
     forecast_change_pct = ((forecast_30_sum - revenue_30)/revenue_30*100.0) if revenue_30 else 0.0
 
+    # Anomalie (z-score)
     def mean_std(xs):
         if not xs: return 0.0, 0.0
         m = sum(xs)/len(xs)
