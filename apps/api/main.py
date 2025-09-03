@@ -16,7 +16,8 @@ app.add_middleware(
 )
 
 @app.get("/health")
-def health(): return {"status":"ok"}
+def health():
+    return {"status":"ok"}
 
 DATE_CANDS = ["date","data","giorno","timestamp","order_date","created_at"]
 AMOUNT_CANDS = ["amount","revenue","ricavo","price","prezzo","total","totale","valore"]
@@ -30,20 +31,26 @@ def find_col(header, candidates):
     return None
 
 def to_float(x):
-    if x is None: return 0.0
+    if x is None:
+        return 0.0
     s = str(x).strip().replace("€","").replace(" ", "")
-    s = s.replace(",", ".")  # gestisci numeri con virgola
-    try: return float(s)
-    except: return 0.0
+    s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 def parse_date(x):
     s = str(x).strip()
     for fmt in ("%Y-%m-%d","%d/%m/%Y","%d-%m-%Y","%m/%d/%Y","%Y/%m/%d","%Y-%m-%d %H:%M:%S"):
-        try: return datetime.strptime(s, fmt)
-        except: pass
-    # tenta ISO
-    try: return datetime.fromisoformat(s.replace("Z",""))
-    except: return None
+        try:
+            return datetime.strptime(s, fmt)
+        except:
+            pass
+    try:
+        return datetime.fromisoformat(s.replace("Z",""))
+    except:
+        return None
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
@@ -58,7 +65,6 @@ async def analyze(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="CSV vuoto o senza header.")
 
     header = reader.fieldnames or []
-    # trova colonne
     date_col = find_col(header, DATE_CANDS) or next((c for c in header if "date" in c.lower() or "data" in c.lower() or "time" in c.lower()), None)
     if not date_col:
         raise HTTPException(status_code=400, detail="Nessuna colonna data trovata (es. 'date').")
@@ -67,25 +73,23 @@ async def analyze(file: UploadFile = File(...)):
     price_col = find_col(header, ["price","prezzo","unit_price","unitprice"])
     qty_col = find_col(header, QTY_CANDS)
 
-    # aggrega per giorno
     daily = {}
     for r in rows:
         d = parse_date(r.get(date_col))
-        if not d:  # salta righe senza data valida
+        if not d:
             continue
         if amount_col:
             amt = to_float(r.get(amount_col))
         elif price_col and qty_col:
             amt = to_float(r.get(price_col)) * to_float(r.get(qty_col))
         else:
-            amt = 1.0  # fallback: conta come ordine
+            amt = 1.0
         day = datetime(d.year, d.month, d.day)
         daily[day] = daily.get(day, 0.0) + amt
 
     if not daily:
         raise HTTPException(status_code=400, detail="Nessuna riga valida dopo il parsing.")
 
-    # completa giorni mancanti
     start = min(daily.keys())
     end = max(daily.keys())
     curr = start
@@ -94,7 +98,6 @@ async def analyze(file: UploadFile = File(...)):
         series.append((curr, float(daily.get(curr, 0.0))))
         curr += timedelta(days=1)
 
-    # ultimi 30 giorni
     end_day = end
     start_30 = end_day - timedelta(days=29)
     last30 = [(d,v) for d,v in series if d >= start_30]
@@ -102,7 +105,6 @@ async def analyze(file: UploadFile = File(...)):
     orders_days = sum(1 for _,v in last30 if v > 0)
     avg_ticket = (revenue_30 / orders_days) if orders_days else 0.0
 
-    # trend 2 settimane vs 2 settimane precedenti
     last30_vals = [v for _,v in last30]
     recent = last30_vals[-14:] if len(last30_vals)>=14 else last30_vals
     prev = last30_vals[-28:-14] if len(last30_vals)>=28 else last30_vals[:max(len(last30_vals)-14,1)]
@@ -110,14 +112,12 @@ async def analyze(file: UploadFile = File(...)):
     w2_prev = mean(prev) if prev else 0.0
     trend_pct = ((w2_recent - w2_prev)/w2_prev*100.0) if w2_prev else 0.0
 
-    # forecast: media mobile ultimi N (N=28 se possibile)
     window = 28 if len(series)>=28 else max(7, len(series))
     base_vals = [v for _,v in series][-window:]
     base = mean(base_vals) if base_vals else 0.0
     forecast_30_sum = base * 30.0
     forecast_change_pct = ((forecast_30_sum - revenue_30)/revenue_30*100.0) if revenue_30 else 0.0
 
-    # anomalie: z-score semplice
     def mean_std(xs):
         if not xs: return 0.0, 0.0
         m = sum(xs)/len(xs)
@@ -142,6 +142,8 @@ async def analyze(file: UploadFile = File(...)):
     if not actions:
         actions.append({"title":"Mantieni strategia, test A/B prezzo o bundle","expected_uplift_pct":1,"priority":"low"})
 
+    timeseries = [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in series]
+
     return {
         "kpi": {
             "revenue_30d": round(revenue_30,2),
@@ -156,5 +158,6 @@ async def analyze(file: UploadFile = File(...)):
             "change_vs_last30_pct": round(forecast_change_pct,2)
         },
         "anomalies": anomalies[:10],
-        "actions": actions
+        "actions": actions,
+        "timeseries": timeseries
     }
