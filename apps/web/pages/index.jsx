@@ -32,7 +32,7 @@ export default function Home(){
   const [mapping,setMapping]=useState({
     // business
     date:"", amount:"", price:"", qty:"",
-    // finance (opzionali, uno dei due insiemi)
+    // finance
     close:"", symbol:"",
     options:{ date_format:"", decimal:"," }
   })
@@ -113,8 +113,7 @@ export default function Home(){
     try{
       const form=new FormData()
       form.append('file', f)
-      const m = {...mapping}
-      form.append('mapping', JSON.stringify(m))
+      form.append('mapping', JSON.stringify(mapping))
       form.append('mode', mode)
       form.append('rf_pct_annual', String(rfPct||0))
       const r=await api.post('/analyze', form, {headers:{'Content-Type':'multipart/form-data'}})
@@ -201,15 +200,28 @@ export default function Home(){
     doc.save('DataPredictor_Report.pdf')
   }
 
-  // === UI ===
-  const [showFinanceOpts, setShowFinanceOpts] = useState(false)
-  useEffect(()=>{ setShowFinanceOpts(mode==='finance') }, [mode])
-
   return (
     <>
       <Head><title>{BRAND.name}</title></Head>
 
-      {/* HERO/landing rimane come nel tuo ultimo styling (non lo ripeto qui per brevità) */}
+      {/* HERO minimale (puoi mantenere il tuo hero stiloso già in uso) */}
+      <section className="hero">
+        <div className="blob b1"></div><div className="blob b2"></div><div className="blob b3"></div>
+        <div className="container hero-inner">
+          <div className="card-gradient" style={{display:'inline-block'}}>
+            <div className="inner" style={{padding:'6px 12px', borderRadius:12, fontWeight:700}}>AI Data Advisor</div>
+          </div>
+          <h1>Business & Finanza: insight <span className="grad">pronti all’azione</span>.</h1>
+          <p className="hero-sub">Carica CSV/XLSX. KPI, forecast, anomalie e report consulente in 25–30 righe.</p>
+          <div className="hero-cta">
+            <button className="cta-primary" onClick={()=>document.getElementById('analyze')?.scrollIntoView({behavior:'smooth'})}>Prova subito</button>
+            <Link className="cta-ghost" href="/history">Storico</Link>
+          </div>
+          <div className="hero-badges">
+            <span>• Upload CSV/XLSX</span><span>• Advisor AI</span><span>• PDF</span><span>• Salvataggio analisi</span>
+          </div>
+        </div>
+      </section>
 
       {/* ANALYZE */}
       <main className="container" id="analyze" style={{paddingTop:24, paddingBottom:40}}>
@@ -303,3 +315,176 @@ export default function Home(){
                           <select value={mapping.options.decimal} onChange={e=>setMapping({...mapping, options:{...mapping.options, decimal:e.target.value}})}>
                             <option value=",">Virgola (,)</option>
                             <option value=".">Punto (.)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <p className="muted" style={{marginTop:8}}>
+                        Minimo: <b>Data</b> e <b>Amount</b> (oppure <b>Prezzo</b> + <b>Quantità</b>).
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* FINANCE mapping */}
+              {mode==='finance' && (
+                <>
+                  {headers.length===0 ? <p>Seleziona un file per vedere le intestazioni.</p> : (
+                    <>
+                      <div className="grid2">
+                        <div>
+                          <label>Data *</label>
+                          <select value={mapping.date} onChange={e=>setMapping({...mapping, date:e.target.value})}>
+                            <option value="">-- seleziona --</option>
+                            {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Close (prezzo di chiusura)</label>
+                          <select value={mapping.close} onChange={e=>setMapping({...mapping, close:e.target.value})}>
+                            <option value="">-- se serie prezzi --</option>
+                            {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Symbol/Ticker</label>
+                          <select value={mapping.symbol} onChange={e=>setMapping({...mapping, symbol:e.target.value})}>
+                            <option value="">-- opzionale --</option>
+                            {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Quantità (per transazioni)</label>
+                          <select value={mapping.qty} onChange={e=>setMapping({...mapping, qty:e.target.value})}>
+                            <option value="">-- se transazioni --</option>
+                            {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Prezzo (per transazioni)</label>
+                          <select value={mapping.price} onChange={e=>setMapping({...mapping, price:e.target.value})}>
+                            <option value="">-- se transazioni --</option>
+                            {headers.map(h=><option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid2">
+                        <div>
+                          <label>Formato data</label>
+                          <select value={mapping.options.date_format} onChange={e=>setMapping({...mapping, options:{...mapping.options, date_format:e.target.value}})}>
+                            <option value="">Auto</option>
+                            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Separatore decimale</label>
+                          <select value={mapping.options.decimal} onChange={e=>setMapping({...mapping, options:{...mapping.options, decimal:e.target.value}})}>
+                            <option value=",">Virgola (,)</option>
+                            <option value=".">Punto (.)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <p className="muted" style={{marginTop:8}}>
+                        Usa <b>Close</b> per serie prezzi singolo asset <i>oppure</i> mappa <b>Symbol + Quantità + Prezzo</b> per transazioni.
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+
+              <div style={{display:'flex', gap:10, justifyContent:'flex-end', marginTop:12}}>
+                <button className="btn-outline" onClick={()=>setMappingOpen(false)}>Chiudi</button>
+                <button className="primary" onClick={()=>{ setMappingOpen(false); }}>Ok</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Report */}
+        <section ref={reportRef}>
+          {rawRes && (
+            <>
+              {/* KPI */}
+              {mode==='business' ? (
+                <section className="kpis">
+                  <div className="card"><div className="kpi-title">Ricavi 30gg</div><div className="kpi-value">€ {rawRes.kpi?.revenue_30d?.toLocaleString?.('it-IT') ?? rawRes.kpi?.revenue_30d}</div></div>
+                  <div className="card"><div className="kpi-title">Giorni con vendite</div><div className="kpi-value">{rawRes.kpi?.orders_days_positive_30d}</div></div>
+                  <div className="card"><div className="kpi-title">Ticket medio</div><div className="kpi-value">€ {rawRes.kpi?.avg_ticket?.toFixed?.(2) ?? rawRes.kpi?.avg_ticket}</div></div>
+                  <div className="card">
+                    <div className="kpi-title">Trend 2w vs 2w</div>
+                    <div className={`kpi-value ${rawRes.kpi?.trend_last_2w_vs_prev_2w_pct >= 0 ? 'pos' : 'neg'}`}>{rawRes.kpi?.trend_last_2w_vs_prev_2w_pct}%</div>
+                  </div>
+                </section>
+              ) : (
+                <section className="kpis">
+                  <div className="card"><div className="kpi-title">Ultimo Prezzo/Valore</div><div className="kpi-value">{rawRes.kpi?.last_price ?? rawRes.kpi?.portfolio_last_value}</div></div>
+                  <div className="card"><div className="kpi-title">Return 30gg</div><div className="kpi-value">{rawRes.kpi?.return_30d_pct}%</div></div>
+                  <div className="card"><div className="kpi-title">CAGR</div><div className="kpi-value">{rawRes.kpi?.cagr_pct}%</div></div>
+                  <div className="card"><div className="kpi-title">Sharpe</div><div className="kpi-value">{rawRes.kpi?.sharpe}</div></div>
+                  <div className="card"><div className="kpi-title">Volatilità annua</div><div className="kpi-value">{rawRes.kpi?.vol_annual_pct}%</div></div>
+                  <div className="card"><div className="kpi-title">Max Drawdown</div><div className="kpi-value">{rawRes.kpi?.max_drawdown_pct}%</div></div>
+                  <div className="card"><div className="kpi-title">Hit Ratio</div><div className="kpi-value">{rawRes.kpi?.hit_ratio_pct}%</div></div>
+                </section>
+              )}
+
+              {/* Differenziali (solo business) */}
+              {mode==='business' && (
+                <section className="card" style={{padding:16, margin:'10px 0'}}>
+                  <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                    <span>MoM: {view?.momPct===null ? 'n/d' : `${view.momPct.toFixed(1)}%`}</span>
+                    <span>YoY: {view?.yoyPct===null ? 'n/d' : `${view.yoyPct.toFixed(1)}%`}</span>
+                  </div>
+                </section>
+              )}
+
+              {/* Chart */}
+              <section className="chart-wrap">
+                <h3>{mode==='finance' ? 'Prezzo/Valore nel tempo' : 'Ricavi giornalieri'}</h3>
+                <div className="chart-box"><canvas ref={canvasRef} /></div>
+              </section>
+
+              {/* Advisor */}
+              <section className="advisor" style={{marginTop:16}}>
+                <h3>Advisor Pro</h3>
+                <button className="primary" onClick={generateAdvisor} disabled={advisorLoading || !rawRes}>
+                  {advisorLoading ? 'Generazione...' : 'Genera report consulente'}
+                </button>
+                {advisorData && (
+                  <>
+                    <pre className="box" style={{whiteSpace:'pre-wrap', marginTop:12}}>{advisorData.advisor_text}</pre>
+                    <div className="grid3" style={{marginTop:12}}>
+                      <div className="card" style={{padding:14}}>
+                        <h4>Playbook 7 giorni</h4>
+                        <ul>{(advisorData.playbook?.['7d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                      <div className="card" style={{padding:14}}>
+                        <h4>Playbook 30 giorni</h4>
+                        <ul>{(advisorData.playbook?.['30d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                      <div className="card" style={{padding:14}}>
+                        <h4>Playbook 90 giorni</h4>
+                        <ul>{(advisorData.playbook?.['90d']||[]).map((x,i)=><li key={i}>{x}</li>)}</ul>
+                      </div>
+                    </div>
+                    <p className="muted">Modalità: {advisorData.mode}</p>
+                  </>
+                )}
+              </section>
+
+              {/* Azioni */}
+              <section className="actions" style={{marginTop:16}}>
+                <h3>Azioni consigliate</h3>
+                {(!rawRes.actions || rawRes.actions.length===0) && <p>Nessuna azione specifica.</p>}
+                <ol>
+                  {(rawRes.actions||[]).map((a,i)=>(<li key={i}><b>{a.title}</b>{' '}— priorità {a.priority}</li>))}
+                </ol>
+              </section>
+            </>
+          )}
+        </section>
+      </main>
+    </>
+  )
+}
