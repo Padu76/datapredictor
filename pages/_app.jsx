@@ -1,6 +1,11 @@
-// E:\datapredictor\pages\_app.jsx
 import '../apps/web/styles/globals.css';
+import FloatingQuickActions from '../components/FloatingQuickActions';
 
 export default function App({ Component, pageProps }) {
-  return <Component {...pageProps} />;
+  return (
+    <>
+      <Component {...pageProps} />
+      <FloatingQuickActions />
+    </>
+  );
 }
