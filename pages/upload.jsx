@@ -1,10 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import CsvDropzone from '../components/CsvDropzone';
 import DataPreview from '../components/DataPreview';
 import ForecastChart from '../components/ForecastChart';
+import AdvisorReport from '../components/AdvisorReport';
+import AdvisorProPanel from '../components/AdvisorProPanel';
 import { inferSchema } from '../lib/csv';
 import { summarizeStats } from '../lib/stats';
 import { computeForecast } from '../lib/forecast';
+import { exportAnalysisPDF } from '../lib/pdf';
+import { hasSupabase, saveAnalysis } from '../lib/storage';
 import { analyzeWithAdvisor } from '../lib/advisor';
 
 export default function UploadPage() {
@@ -14,8 +18,9 @@ export default function UploadPage() {
   const [dateCol, setDateCol] = useState('');
   const [result, setResult] = useState(null);
   const [advisor, setAdvisor] = useState(null);
+  const [msg, setMsg] = useState('');
+  const pdfRef = useRef(null);
 
-  const schema = useMemo(() => inferSchema(rows), [rows]);
   const stats = useMemo(() => (target ? summarizeStats(rows, target) : null), [rows, target]);
 
   const onData = (data) => {
@@ -32,89 +37,93 @@ export default function UploadPage() {
     setAdvisor(adv);
   };
 
-  const exportCsv = () => {
-    if (!result?.forecast) return;
-    const header = ['index','date','y_hat_ma','y_hat_trend'];
-    const lines = [header.join(',')];
-    result.forecast.forEach((r) => {
-      lines.push([r.index, r.date ?? '', r.y_hat_ma, r.y_hat_trend].join(','));
-    });
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'forecast.csv'; a.click();
-    URL.revokeObjectURL(url);
+  const onExportPDF = async () => {
+    const el = pdfRef.current;
+    if (!el) return;
+    await exportAnalysisPDF(el, 'DataPredictor-Report.pdf');
+  };
+
+  const onSave = async () => {
+    try {
+      if (!hasSupabase()) { setMsg('Supabase non configurato.'); return; }
+      if (!result || !advisor) { setMsg('Esegui analisi prima di salvare.'); return; }
+      const row = await saveAnalysis({
+        title: `Analisi ${target}`,
+        target, date_col: dateCol,
+        stats, forecast: result, advisor,
+        file_meta: { rows: rows.length }
+      });
+      setMsg('Analisi salvata: ' + row.id);
+    } catch (e) {
+      setMsg('Errore salvataggio: ' + (e.message || String(e)));
+    }
   };
 
   return (
     <div className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
       <div className="hero card" style={{ padding: 16, marginBottom: 16 }}>
-        <h1 className="grad" style={{ margin: 0 }}>Upload, Forecast & Advisor</h1>
-        <p className="hero-sub">Carica un CSV, ottieni grafico/forecast e un report consulenziale con azioni per breve, medio e lungo periodo.</p>
+        <h1 className="grad" style={{ margin: 0 }}>Upload, Forecast & Advisor PRO</h1>
+        <p className="hero-sub">Carica un CSV, ottieni grafico, consigli automatici e salva/report.</p>
       </div>
 
       <CsvDropzone onData={onData} />
 
       {rows.length > 0 && (
         <>
-          <div className="section" style={{ paddingTop: 24, paddingBottom: 24 }}>
+          <div className="section" style={{ paddingTop: 24, paddingBottom: 24 }} ref={pdfRef}>
             <DataPreview rows={rows.slice(0, 50)} />
-          </div>
 
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div className="toolbar">
-              <div style={{ minWidth: 220 }}>
-                <label>Colonna target</label>
-                <select value={target} onChange={e => setTarget(e.target.value)}>
-                  <option value="">— seleziona —</option>
-                  {columns.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+            <div className="card" style={{ padding: 16, marginTop: 12 }}>
+              <div className="toolbar">
+                <div style={{ minWidth: 220 }}>
+                  <label>Colonna target</label>
+                  <select value={target} onChange={e => setTarget(e.target.value)}>
+                    <option value="">— seleziona —</option>
+                    {columns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div style={{ minWidth: 220 }}>
+                  <label>Colonna data (opzionale)</label>
+                  <select value={dateCol} onChange={e => setDateCol(e.target.value)}>
+                    <option value="">— nessuna —</option>
+                    {columns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div style={{ marginLeft: 'auto' }}>
+                  <button className="primary" onClick={runAnalysis}>Analizza & Consiglia</button>
+                </div>
               </div>
-              <div style={{ minWidth: 220 }}>
-                <label>Colonna data (opzionale)</label>
-                <select value={dateCol} onChange={e => setDateCol(e.target.value)}>
-                  <option value="">— nessuna —</option>
-                  {columns.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div style={{ marginLeft: 'auto' }}>
-                <button className="primary" onClick={runAnalysis}>Analizza & Consiglia</button>
-              </div>
+
+              {stats && (
+                <div className="kpis">
+                  <div><div className="kpi-title">Min</div><div className="kpi-value">{stats.min}</div></div>
+                  <div><div className="kpi-title">Max</div><div className="kpi-value">{stats.max}</div></div>
+                  <div><div className="kpi-title">Media</div><div className="kpi-value">{stats.mean}</div></div>
+                  <div><div className="kpi-title">Dev. std</div><div className="kpi-value">{stats.std}</div></div>
+                </div>
+              )}
             </div>
 
-            {stats && (
-              <div className="kpis">
-                <div><div className="kpi-title">Min</div><div className="kpi-value">{stats.min}</div></div>
-                <div><div className="kpi-title">Max</div><div className="kpi-value">{stats.max}</div></div>
-                <div><div className="kpi-title">Media</div><div className="kpi-value">{stats.mean}</div></div>
-                <div><div className="kpi-title">Dev. std</div><div className="kpi-value">{stats.std}</div></div>
+            {result && (
+              <div className="card" style={{ padding: 16, marginTop: 12 }}>
+                <ForecastChart target={target} dateCol={dateCol} rows={rows} forecast={result.forecast} />
               </div>
+            )}
+
+            {advisor && (
+              <AdvisorReport advisor={advisor} />
             )}
           </div>
 
-          {result && (
-            <>
-              <ForecastChart target={target} dateCol={dateCol} rows={rows} forecast={result.forecast} />
-              <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap:'wrap' }}>
-                <button className="ghost" onClick={exportCsv}>Scarica forecast CSV</button>
-              </div>
-            </>
-          )}
-
-          {advisor && (
-            <>
-              <div style={{ height: 8 }} />
-              <div className="divider" />
-            </>
-          )}
-        </>
-      )}
-
-      {advisor && (
-        <>
-          <div style={{ marginTop: 12 }}>
-            {/** Advisor Report */}
-            {require('../components/AdvisorReport').default({ advisor })}
+          <div style={{ display:'flex', gap: 12, marginTop: 12, flexWrap:'wrap' }}>
+            <button className="ghost" onClick={onExportPDF}>Esporta PDF</button>
+            <button className="ghost" onClick={onSave}>Salva su Storico</button>
+            <a className="ghost" href="/history">Vai allo storico</a>
           </div>
+
+          <AdvisorProPanel rows={rows} target={target} dateCol={dateCol} />
+
+          {msg && <div className="card" style={{ padding:12, marginTop:12 }}>{msg}</div>}
         </>
       )}
     </div>
