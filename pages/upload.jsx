@@ -1,10 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
-import CsvDropzone from '../components/CsvDropzone';
+import SmartUpload from '../components/SmartUpload';
 import DataPreview from '../components/DataPreview';
 import ForecastChart from '../components/ForecastChart';
 import AdvisorReport from '../components/AdvisorReport';
 import AdvisorProPanel from '../components/AdvisorProPanel';
-import { inferSchema } from '../lib/csv';
 import { summarizeStats } from '../lib/stats';
 import { computeForecast } from '../lib/forecast';
 import { exportAnalysisPDF } from '../lib/pdf';
@@ -23,10 +22,13 @@ export default function UploadPage() {
 
   const stats = useMemo(() => (target ? summarizeStats(rows, target) : null), [rows, target]);
 
-  const onData = (data) => {
-    setRows(data);
-    setColumns(Object.keys(data?.[0] || {}));
-    setTarget(''); setDateCol(''); setResult(null); setAdvisor(null);
+  const onParsed = ({ rows, inferred }) => {
+    setRows(rows);
+    const cols = Object.keys(rows?.[0] || {});
+    setColumns(cols);
+    setTarget(inferred?.target || '');
+    setDateCol(inferred?.dateCol || '');
+    setResult(null); setAdvisor(null);
   };
 
   const runAnalysis = () => {
@@ -62,11 +64,11 @@ export default function UploadPage() {
   return (
     <div className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
       <div className="hero card" style={{ padding: 16, marginBottom: 16 }}>
-        <h1 className="grad" style={{ margin: 0 }}>Upload, Forecast & Advisor PRO</h1>
-        <p className="hero-sub">Carica un CSV, ottieni grafico, consigli automatici e salva/report.</p>
+        <h1 className="grad" style={{ margin: 0 }}>Upload intelligente (CSV/XLS/XLSX)</h1>
+        <p className="hero-sub">Carica un file senza pensieri: riconosciamo automaticamente Data e Target.</p>
       </div>
 
-      <CsvDropzone onData={onData} />
+      <SmartUpload onParsed={onParsed} />
 
       {rows.length > 0 && (
         <>
@@ -110,9 +112,7 @@ export default function UploadPage() {
               </div>
             )}
 
-            {advisor && (
-              <AdvisorReport advisor={advisor} />
-            )}
+            {advisor && <AdvisorReport advisor={advisor} />}
           </div>
 
           <div style={{ display:'flex', gap: 12, marginTop: 12, flexWrap:'wrap' }}>
@@ -121,7 +121,13 @@ export default function UploadPage() {
             <a className="ghost" href="/history">Vai allo storico</a>
           </div>
 
-          <AdvisorProPanel rows={rows} target={target} dateCol={dateCol} />
+          <div style={{ marginTop: 12 }}>
+            <div className="card" style={{ padding: 12 }}>
+              <div style={{ fontWeight:700, marginBottom:6 }}>Consulenza PRO (AI)</div>
+              <p className="hero-sub" style={{ marginTop:0 }}>Se vuoi un piano d’azione potenziato, genera l’analisi AI.</p>
+              <AdvisorProPanel rows={rows} target={target} dateCol={dateCol} />
+            </div>
+          </div>
 
           {msg && <div className="card" style={{ padding:12, marginTop:12 }}>{msg}</div>}
         </>
