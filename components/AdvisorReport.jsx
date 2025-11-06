@@ -1,54 +1,78 @@
 export default function AdvisorReport({ advisor }) {
-  if (!advisor) return null;
+  const a = advisor || {};
 
-  const Pill = ({ label, tone='default' }) => (
-    <span style={{
-      display:'inline-block', padding:'4px 10px', borderRadius: 999,
-      background: tone==='good' ? 'rgba(34,197,94,.15)' : tone==='warn' ? 'rgba(234,179,8,.15)' : tone==='bad' ? 'rgba(239,68,68,.15)' : 'rgba(255,255,255,.06)',
-      border: '1px solid var(--border)', fontSize:12
-    }}>{label}</span>
+  const arrayify = (v) => {
+    if (Array.isArray(v)) return v;
+    if (!v) return [];
+    if (typeof v === 'string') return [v];
+    if (typeof v === 'number' || typeof v === 'boolean') return [String(v)];
+    if (typeof v === 'object') {
+      try {
+        // Se è un oggetto tipo {0:'a',1:'b'} o {x:['a','b']}
+        const vals = Object.values(v).flat();
+        return vals.map(x => (typeof x === 'string' ? x : JSON.stringify(x)));
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const shortActions = arrayify(a?.horizonActions?.short || a?.actions?.short);
+  const mediumActions = arrayify(a?.horizonActions?.medium || a?.actions?.medium);
+  const longActions = arrayify(a?.horizonActions?.long || a?.actions?.long);
+
+  const Summary = () => (
+    <div className="card" style={{ padding: 16, marginTop: 12 }}>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>Sintesi</div>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{a.summary || '—'}</div>
+    </div>
   );
 
-  const tone = advisor.health === 'eccellente' ? 'good' : advisor.health === 'critica' ? 'bad' : advisor.health === 'attenzione' ? 'warn' : 'default';
+  const List = ({ title, items }) => (
+    <div className="card" style={{ padding: 16, marginTop: 12 }}>
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>{title}</div>
+      {items.length === 0 ? (
+        <div style={{ color: 'var(--muted)' }}>Nessun elemento</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {items.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{String(it)}</li>)}
+        </ul>
+      )}
+    </div>
+  );
 
   return (
-    <div className="card" style={{ padding: 16, marginTop: 12 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom: 8 }}>
-        <h3 style={{ margin:0, fontWeight:700 }}>Advisor Report</h3>
-        <Pill label={`Trend: ${advisor.trend.label}`} />
-        <Pill label={`Volatilità: ${advisor.volatility.label}`} />
-        <Pill label={`Salute: ${advisor.health}`} tone={tone} />
-        <Pill label={`Rischio: ${advisor.risk}/100`} tone={tone} />
-      </div>
-      <p style={{ color:'var(--muted)', marginTop: 4 }}>{advisor.summary}</p>
-
-      <div style={{ display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', marginTop: 12 }}>
-        <div className="card" style={{ padding:12 }}>
-          <div style={{ fontWeight:700, marginBottom:6 }}>Breve (1–3 mesi)</div>
-          <ul style={{ margin:0, paddingLeft: '1.2em' }}>
-            {advisor.horizonActions.short.map((a,i)=>(<li key={i} style={{ marginBottom:6 }}>{a}</li>))}
-          </ul>
-        </div>
-        <div className="card" style={{ padding:12 }}>
-          <div style={{ fontWeight:700, marginBottom:6 }}>Medio (3–6 mesi)</div>
-          <ul style={{ margin:0, paddingLeft: '1.2em' }}>
-            {advisor.horizonActions.medium.map((a,i)=>(<li key={i} style={{ marginBottom:6 }}>{a}</li>))}
-          </ul>
-        </div>
-        <div className="card" style={{ padding:12 }}>
-          <div style={{ fontWeight:700, marginBottom:6 }}>Lungo (6+ mesi)</div>
-          <ul style={{ margin:0, paddingLeft: '1.2em' }}>
-            {advisor.horizonActions.long.map((a,i)=>(<li key={i} style={{ marginBottom:6 }}>{a}</li>))}
-          </ul>
+    <div className="section" style={{ paddingTop: 12, paddingBottom: 12 }}>
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px,1fr))', gap: 12 }}>
+          <div>
+            <div className="kpi-title">Stato</div>
+            <div className="kpi-value">{a.tone || a.health || '—'}</div>
+          </div>
+          <div>
+            <div className="kpi-title">Rischio</div>
+            <div className="kpi-value">{a.risk ?? '—'}</div>
+          </div>
         </div>
       </div>
 
-      <details style={{ marginTop:12 }}>
-        <summary className="ghost" style={{ cursor:'pointer', padding:'6px 10px', display:'inline-block' }}>Dettagli forecast (anteprima)</summary>
-        <pre style={{ marginTop:8, fontSize:12, background:'rgba(0,0,0,.4)', padding:12, borderRadius:8, overflowX:'auto' }}>
-{JSON.stringify(advisor.forecastSample, null, 2)}
-        </pre>
-      </details>
+      <Summary />
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px,1fr))', gap: 12 }}>
+        <List title="Azioni Breve" items={shortActions} />
+        <List title="Azioni Medio" items={mediumActions} />
+        <List title="Azioni Lungo" items={longActions} />
+      </div>
+
+      {Array.isArray(a?.risks) && a.risks.length > 0 && (
+        <div className="card" style={{ padding: 16, marginTop: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Rischi & Attenzioni</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {a.risks.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{String(it)}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

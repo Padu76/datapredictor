@@ -28,10 +28,14 @@ export default function AnalysisDetail() {
 
   const back = () => router.push('/history');
 
+  const target = item?.target || '—';
+  const dateCol = item?.date_col || '—';
+  const rowsCount = item?.file_meta?.rows ?? item?.file_meta?.count ?? '—';
+
   return (
     <div className="container" style={{ padding: 24 }}>
       <div className="hero card" style={{ padding: 16, marginBottom: 16 }}>
-        <h1 className="grad" style={{ margin: 0 }}>{item?.title || item?.target || 'Analisi'}</h1>
+        <h1 className="grad" style={{ margin: 0 }}>{item?.title || 'Analisi'}</h1>
         <p className="hero-sub">{item?.created_at ? new Date(item.created_at).toLocaleString() : ''}</p>
         <button className="ghost" onClick={back}>← Torna allo storico</button>
       </div>
@@ -43,9 +47,9 @@ export default function AnalysisDetail() {
         <>
           <div className="card" style={{ padding: 16, marginBottom: 12 }}>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px,1fr))', gap: 8 }}>
-              <div><div className="kpi-title">Target</div><div className="kpi-value">{item.target}</div></div>
-              <div><div className="kpi-title">Colonna data</div><div className="kpi-value">{item.date_col || '—'}</div></div>
-              <div><div className="kpi-title">Righe</div><div className="kpi-value">{item?.file_meta?.rows || '—'}</div></div>
+              <div><div className="kpi-title">Target</div><div className="kpi-value">{target}</div></div>
+              <div><div className="kpi-title">Colonna data</div><div className="kpi-value">{dateCol}</div></div>
+              <div><div className="kpi-title">Righe</div><div className="kpi-value">{rowsCount}</div></div>
             </div>
           </div>
 

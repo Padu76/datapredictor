@@ -1,17 +1,28 @@
 import { useEffect, useState } from 'react';
 import { hasSupabase, listAnalyses } from '../lib/storage';
 import AnalysisCard from '../components/AnalysisCard';
+// dynamic import of normalizer to avoid bundling when not used
+let normalizeAllAnalysesFn = null;
+async function ensureNormalizer(){
+  if (!normalizeAllAnalysesFn) {
+    const mod = await import('../lib/storage.additions.js');
+    normalizeAllAnalysesFn = mod.normalizeAllAnalyses;
+  }
+  return normalizeAllAnalysesFn;
+}
 
 export default function HistoryPage() {
   const [items, setItems] = useState([]);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
         if (!hasSupabase()) { setErr('Supabase non configurato.'); setLoading(false); return; }
-        const data = await listAnalyses(50);
+        const data = await listAnalyses(200);
         setItems(data || []);
       } catch (e) {
         setErr(String(e.message || e));
@@ -21,11 +32,33 @@ export default function HistoryPage() {
     })();
   }, []);
 
+  const runNormalize = async () => {
+    try {
+      setBusy(true); setMsg('Normalizzazione in corso…');
+      const normalizeAllAnalyses = await ensureNormalizer();
+      const res = await normalizeAllAnalyses({ limit: 2000 });
+      setMsg(`Normalizzazione completata: ${res.ok}/${res.total} ok, ${res.fail} errori`);
+    } catch (e) {
+      setMsg('Errore normalizzazione: ' + (e.message || String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="container" style={{ padding: 24 }}>
       <div className="hero card" style={{ padding: 16, marginBottom: 16 }}>
         <h1 className="grad" style={{ margin: 0 }}>Storico Analisi</h1>
         <p className="hero-sub">Riapri le analisi salvate, consulta il forecast e il riepilogo dell’Advisor.</p>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <a className="ghost" href="/upload">← Torna a /upload</a>
+          {hasSupabase() && (
+            <button className="ghost" onClick={runNormalize} disabled={busy}>
+              {busy ? 'Normalizzo…' : 'Normalizza record'}
+            </button>
+          )}
+          {msg && <span style={{ color: 'var(--muted)' }}>{msg}</span>}
+        </div>
       </div>
 
       {err && <div className="card" style={{ padding:12, marginBottom:12, color:'#f66' }}>{err}</div>}
