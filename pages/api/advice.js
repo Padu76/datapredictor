@@ -1,11 +1,10 @@
 // pages/api/advice.js
-// Advisor PRO+ : prompt potenziato + normalizzazione output
 export const config = { api: { bodyParser: { sizeLimit: '2mb' } } };
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const { rows = [], target = '', dateCol = '', domain = 'business', stats = null, baseline = null } = req.body || {};
+    const { rows = [], target = '', dateCol = '', domain = 'business', stats = null, baseline = null, narrativeLines = 36 } = req.body || {};
     if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({ error: 'Missing OPENAI_API_KEY (server env).' });
     }
@@ -13,34 +12,35 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'rows[] and target are required' });
     }
 
-    // Build compact numeric summary server-side (robust even if client didn't send stats)
     const compact = computeCompact(rows, target, dateCol);
 
+    const domainBrief = domainPrompt(domain);
+
     const context = {
-      target, dateCol, domain,
+      target, dateCol,
       compact,
       clientStats: stats || null,
       baselineAdvisor: baseline || null,
       samplePreview: rows.slice(0, 60)
     };
 
-    const sys = `Sei un consulente analitico senior (marketing & business). Devi fornire un piano d'azione *operativo* e misurabile.
-Usa numeri realistici (range % o valori) e collega le azioni a KPI e vincoli tipici (budget, margini, capacità, funnel).
-Rispondi SOLO in JSON con lo schema seguente (nessun testo fuori dal JSON):
+    const sys = `Sei un consulente analitico senior. Genera un piano operativo e misurabile, con leve, KPI e range numerici realistici.
+Contesto dominio: ${domainBrief}
+Rispondi SOLO in JSON con lo schema:
 {
-  "summary": "max 6-7 righe con insight chiave",
+  "summary": "6-7 righe",
   "tone": "positivo|neutro|negativo",
   "risk": "basso|medio|alto",
   "horizonActions": {
-    "short": ["azioni per 1–3 mesi (con leve, %/range, test A/B, quick wins)"],
-    "medium": ["azioni per 3–6 mesi (scalabilità, allocazioni, processi)"],
-    "long": ["azioni per 6+ mesi (diversificazione, product/channel, sistemi)"]
+    "short": ["..."],
+    "medium": ["..."],
+    "long": ["..."]
   },
-  "risks": ["rischi pratici e come mitigarli"]
+  "risks": ["..."],
+  "narrative": "testo discorsivo completo (almeno ${Math.max(30, narrativeLines)} righe), strutturato in paragrafi con consigli pratici per ${domain}"
 }`;
 
-    const prompt = `CONTESTO:\n${JSON.stringify(context, null, 2)}\n\n
-OBIETTIVO: Genera una consulenza potenziata. Evita frasi generiche. Usa punti elenco chiari e misurabili.`;
+    const prompt = `DATI E INDICATORI:\n${JSON.stringify(context, null, 2)}\n\nOBIETTIVO: Consulenza PRO dettagliata per "${target}". Evita frasi generiche, inserisci %/range, suggerisci A/B test, allocazioni e priorità.`;
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -67,11 +67,25 @@ OBIETTIVO: Genera una consulenza potenziata. Evita frasi generiche. Usa punti el
     const content = data?.choices?.[0]?.message?.content || "";
     const parsed = safeJson(content);
     const out = normalizeAdvisor(parsed);
-
+    // ensure narrative string exists
+    if (typeof out.narrative !== 'string' || out.narrative.trim().length < 200) {
+      // fallback: synthesize basic narrative from actions
+      out.narrative = synthesizeNarrative(out);
+    }
     return res.status(200).json(out);
   } catch (e) {
     return res.status(500).json({ error: 'Advisor error', detail: String(e) });
   }
+}
+
+function domainPrompt(domain) {
+  const m = {
+    marketing: "Marketing performance: acquisizione, CPL, CPA, ROAS, conversion rate, retention, canali paid/organic, creatività, segmentazione.",
+    sales: "Vendite: pipeline, win-rate, CAC payback, pricing & scontistica, cicli commerciali, onboarding, upsell & cross-sell, churn.",
+    finance: "Finanza/Business: ricavi, costi, margini, MRR/ARR, LTV/CAC, cassa, budget, inventario, rotazioni, controllo di gestione.",
+    business: "Business generale: efficienza operativa, crescita sostenibile, priorità roadmap, staffing, processi, KPI e governance."
+  };
+  return m[(domain || '').toLowerCase()] || m.business;
 }
 
 // ---- helpers ----
@@ -104,10 +118,18 @@ function normalizeAdvisor(a) {
     long: toArray(a?.horizonActions?.long || a?.actions?.long || a?.longTerm || a?.long),
   };
   out.risks = toArray(a?.risks || a?.watchouts);
+  out.narrative = typeof a?.narrative === 'string' ? a.narrative : '';
   return out;
 }
+function synthesizeNarrative(a) {
+  const b = [...(a?.horizonActions?.short||[]), ...(a?.horizonActions?.medium||[]), ...(a?.horizonActions?.long||[])];
+  if (!b.length) return 'Analisi narrativa non disponibile.';
+  const lines = b.map((x,i) => `${i+1}. ${String(x)}`);
+  // Ensure at least ~30 lines by repeating with slight formatting
+  while (lines.length < 30) lines.push(lines[lines.length % b.length]);
+  return lines.join('\n');
+}
 
-// Create compact numeric summary
 function computeCompact(rows, target, dateCol) {
   const vals = rows.map(r => num(r[target])).filter(isFinite);
   const n = vals.length;

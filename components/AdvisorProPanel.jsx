@@ -1,7 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { summarizeStats } from '../lib/stats';
 import { analyzeWithAdvisor } from '../lib/advisor';
+import { exportAdvisorPlusPDF } from '../lib/pdf';
 
 export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }) {
   const [ai, setAI] = useState(null);
@@ -9,11 +10,14 @@ export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }
   const [unified, setUnified] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [domain, setDomain] = useState('marketing');
+  const [narrative, setNarrative] = useState('');
+
+  const ref = useRef(null);
 
   const run = async () => {
     try {
       setBusy(true); setMsg('Analisi PRO in corso…');
-      // baseline (deterministica, locale)
       const stats = target ? summarizeStats(rows, target) : null;
       const baseline = analyzeWithAdvisor(rows, { target, dateCol });
       setBase(baseline);
@@ -21,13 +25,13 @@ export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }
       const r = await fetch('/api/advice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows, target, dateCol, stats, baseline })
+        body: JSON.stringify({ rows, target, dateCol, stats, baseline, domain, narrativeLines: 36 })
       });
       if (!r.ok) throw new Error(await r.text());
       const aiOut = await r.json();
       setAI(aiOut);
+      setNarrative(aiOut.narrative || '');
 
-      // Unified advisor: merge coerente
       const uni = mergeAdvisors(baseline, aiOut);
       setUnified(uni);
       setMsg('');
@@ -38,11 +42,38 @@ export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }
     }
   };
 
+  const onExportPDF = async () => {
+    try {
+      await exportAdvisorPlusPDF({
+        target, dateCol, domain,
+        baseline: base, ai, unified,
+        narrative
+      });
+    } catch (e) {
+      alert('Errore export PDF: ' + (e.message || String(e)));
+    }
+  };
+
   return (
-    <div>
-      <button className="primary" onClick={run} disabled={busy || !target || !rows.length}>
-        {busy ? 'Generazione…' : 'Genera Consulenza PRO (AI)'}
-      </button>
+    <div ref={ref}>
+      <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:8 }}>
+        <div>
+          <label style={{ fontSize:12, color:'var(--muted)' }}>Dominio</label><br/>
+          <select value={domain} onChange={e=>setDomain(e.target.value)}>
+            <option value="marketing">Marketing</option>
+            <option value="sales">Sales</option>
+            <option value="finance">Finance</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <button className="primary" onClick={run} disabled={busy || !target || !rows.length}>
+          {busy ? 'Generazione…' : 'Genera Consulenza PRO (AI)'}
+        </button>
+        {(ai || unified) && (
+          <button className="ghost" onClick={onExportPDF}>Esporta PDF (Unificato)</button>
+        )}
+      </div>
+
       {msg && <div style={{ marginTop:8, color: '#f66' }}>{msg}</div>}
 
       {(ai || base) && (
@@ -53,6 +84,7 @@ export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }
             <span className="tag">Volatilità: {base?.volatility || '—'}</span>
             <span className="tag">Salute: {base?.health || '—'}</span>
             <span className="tag">Rischio: {base?.risk ?? '—'}</span>
+            <span className="tag">Dominio: {domain}</span>
           </div>
 
           {unified && (
@@ -66,6 +98,12 @@ export default function AdvisorProPanel({ rows = [], target = '', dateCol = '' }
             <div className="card" style={{ padding: 12, marginBottom: 12 }}>
               <div style={{ fontWeight:700, marginBottom:6 }}>Consulenza PRO (AI)</div>
               <GridActions data={ai} />
+              {narrative && (
+                <div style={{ marginTop:12, whiteSpace:'pre-wrap', lineHeight:1.5 }}>
+                  <div style={{ fontWeight:700, marginBottom:4 }}>Report discorsivo</div>
+                  {narrative}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -117,7 +155,6 @@ function mergeAdvisors(base, ai) {
     });
     return out;
   }
-  // baseline may have actions as strings already
   const b = normalizeBase(base);
   out.horizonActions.short = uniq([...(b.short||[]), ...(ai?.horizonActions?.short||[])]);
   out.horizonActions.medium = uniq([...(b.medium||[]), ...(ai?.horizonActions?.medium||[])]);
