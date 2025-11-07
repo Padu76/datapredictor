@@ -1,31 +1,40 @@
-import { useEffect, useState } from 'react';
+// pages/history2/[id].jsx
 import { useRouter } from 'next/router';
-import ForecastChart from '../../components/ForecastChart';
-import AdvisorReport from '../../components/AdvisorReport';
-import { getAnalysis } from '../../lib/storage';
+import { useEffect, useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
-export default function AnalysisDetail() {
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+export default function History2Detail() {
   const router = useRouter();
   const { id } = router.query || {};
   const [item, setItem] = useState(null);
   const [err, setErr] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(true);
 
   useEffect(() => {
     if (!id) return;
     (async () => {
       try {
-        const row = await getAnalysis(id);   // legge da Supabase
-        setItem(row);
+        const { data, error } = await supabase
+          .from('analyses')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (error) throw error;
+        setItem(data || null);
       } catch (e) {
         setErr(String(e?.message || e));
       } finally {
-        setLoading(false);
+        setBusy(false);
       }
     })();
   }, [id]);
 
-  const back = () => router.push('/history');
+  const back = () => router.push('/history2');
 
   return (
     <div className="container" style={{ padding: 24 }}>
@@ -36,30 +45,35 @@ export default function AnalysisDetail() {
       </div>
 
       {err && <div className="card" style={{ padding:12, marginBottom:12, color:'#f66' }}>{err}</div>}
-      {loading && <div className="card" style={{ padding:12 }}>Caricamento…</div>}
+      {busy && <div className="card" style={{ padding:12 }}>Caricamento…</div>}
 
       {item && (
         <>
           <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px,1fr))', gap: 8 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px,1fr))', gap: 8 }}>
               <div><div className="kpi-title">Target</div><div className="kpi-value">{item?.target || '—'}</div></div>
               <div><div className="kpi-title">Colonna data</div><div className="kpi-value">{item?.date_col || '—'}</div></div>
               <div><div className="kpi-title">Righe</div><div className="kpi-value">{item?.file_meta?.rows ?? item?.file_meta?.count ?? '—'}</div></div>
             </div>
           </div>
 
-          {item.forecast?.forecast && (
+          {item?.advisor && (
             <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-              <ForecastChart
-                rows={[]}
-                target={item.target}
-                dateCol={item.date_col}
-                forecast={item.forecast.forecast}
-              />
+              <div style={{ fontWeight:700, marginBottom:6 }}>Advisor (AI)</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px,1fr))', gap:12 }}>
+                <Block title="Breve (1–3 mesi)" arr={item.advisor?.horizonActions?.short} />
+                <Block title="Medio (3–6 mesi)" arr={item.advisor?.horizonActions?.medium} />
+                <Block title="Lungo (6+ mesi)" arr={item.advisor?.horizonActions?.long} />
+              </div>
+
+              {item.advisor?.narrative && (
+                <div style={{ marginTop:12, whiteSpace:'pre-wrap', lineHeight:1.5 }}>
+                  <div className="kpi-title" style={{ fontWeight:700, marginBottom:6 }}>Report discorsivo (AI)</div>
+                  {item.advisor.narrative}
+                </div>
+              )}
             </div>
           )}
-
-          {item.advisor && <AdvisorReport advisor={item.advisor} />}
 
           {item?.advisor?.logs?.length > 0 && (
             <div className="card" style={{ padding: 12, marginTop: 12 }}>
@@ -69,7 +83,8 @@ export default function AnalysisDetail() {
                 <tbody>
                   {item.advisor.logs.map((l,i)=>(
                     <tr key={i}>
-                      <td>{l.step}</td><td align="center">{l.ok ? '✓' : '✗'}</td><td align="right">{l.ms}</td><td>{l.error||''}</td>
+                      <td>{l.step}</td><td align="center">{l.ok ? '✓' : '✗'}</td>
+                      <td align="right">{l.ms}</td><td>{l.error||''}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -84,6 +99,20 @@ export default function AnalysisDetail() {
             </details>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function Block({ title, arr }) {
+  const list = Array.isArray(arr) ? arr : [];
+  return (
+    <div style={{ padding: 12, borderRadius: 12, background: 'var(--card-bg)' }}>
+      <div style={{ fontWeight:700, marginBottom:6 }}>{title}</div>
+      {list.length === 0 ? <div className="hero-sub">—</div> : (
+        <ul style={{ margin:0, paddingLeft:18 }}>
+          {list.map((x,i) => <li key={i} style={{ marginBottom:6 }}>{String(x)}</li>)}
+        </ul>
       )}
     </div>
   );
