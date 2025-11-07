@@ -1,17 +1,12 @@
-
+// pages\history3\[id].jsx
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../../lib/supabase';
 
 let ForecastChart = null;
 try { ForecastChart = require('../../components/ForecastChart').default; } catch {}
 let AdvisorReport = null;
 try { AdvisorReport = require('../../components/AdvisorReport').default; } catch {}
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
 
 export default function History3Detail() {
   const router = useRouter();
@@ -24,6 +19,13 @@ export default function History3Detail() {
     if (!id) return;
     (async () => {
       try {
+        const supabase = getSupabaseClient();
+        if (!supabase) {
+          setErr('Supabase non configurato');
+          setBusy(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('analyses')
           .select('*')

@@ -1,13 +1,8 @@
-
+// pages\history3\index.jsx
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../../lib/supabase';
 import HistoryCard3 from '../../components/HistoryCard3';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
 
 export default function History3() {
   const [items, setItems] = useState([]);
@@ -17,6 +12,13 @@ export default function History3() {
   useEffect(() => {
     (async () => {
       try {
+        const supabase = getSupabaseClient();
+        if (!supabase) {
+          setErr('Supabase non configurato');
+          setBusy(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('analyses')
           .select('*')
