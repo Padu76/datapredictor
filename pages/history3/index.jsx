@@ -35,8 +35,8 @@ export default function History3() {
   return (
     <div className="container" style={{ padding: 24 }}>
       <div className="hero card" style={{ padding: 16, marginBottom: 16 }}>
-        <h1 className="grad" style={{ margin: 0 }}>Storico Analisi 3</h1>
-        <p className="hero-sub">Versione indipendente (non sostituisce le pagine esistenti).</p>
+        <h1 className="grad" style={{ margin: 0 }}>Storico Analisi</h1>
+        <p className="hero-sub">Riapri le analisi salvate, consulta il forecast e il riepilogo dell'Advisor.</p>
         <div style={{ display:'flex', gap:8 }}>
           <Link className="ghost" href="/upload">← Torna a /upload</Link>
         </div>

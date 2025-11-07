@@ -6,7 +6,7 @@ export default function Home() {
         <p className="hero-sub">Carica CSV/XLSX, analizza i dati e ottieni un report consulenziale.</p>
         <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginTop: 12 }}>
           <a className="primary" href="/upload">🚀 Upload & Advisor</a>
-          <a className="ghost" href="/history">📚 Storico Analisi</a>
+          <a className="ghost" href="/history3">📚 Storico Analisi</a>
         </div>
       </div>
       <div className="card" style={{ padding: 16 }}>

@@ -118,7 +118,7 @@ export default function UploadPage() {
           <div style={{ display:'flex', gap: 12, marginTop: 12, flexWrap:'wrap' }}>
             <button className="ghost" onClick={onExportPDF}>Esporta PDF</button>
             <button className="ghost" onClick={onSave}>Salva su Storico</button>
-            <a className="ghost" href="/history">Vai allo storico</a>
+            <a className="ghost" href="/history3">Vai allo storico</a>
           </div>
 
           <div style={{ marginTop: 12 }}>
