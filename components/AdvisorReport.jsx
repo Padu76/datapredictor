@@ -1,5 +1,20 @@
+// components\AdvisorReport.jsx
 export default function AdvisorReport({ advisor }) {
   const a = advisor || {};
+
+  // Helper per convertire qualsiasi valore in stringa renderizzabile
+  const toRenderable = (v) => {
+    if (v === null || v === undefined) return '—';
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (typeof v === 'object') {
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return '—';
+      }
+    }
+    return '—';
+  };
 
   const arrayify = (v) => {
     if (Array.isArray(v)) return v;
@@ -25,7 +40,7 @@ export default function AdvisorReport({ advisor }) {
   const Summary = () => (
     <div className="card" style={{ padding: 16, marginTop: 12 }}>
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Sintesi</div>
-      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{a.summary || '—'}</div>
+      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{toRenderable(a.summary)}</div>
     </div>
   );
 
@@ -36,7 +51,7 @@ export default function AdvisorReport({ advisor }) {
         <div style={{ color: 'var(--muted)' }}>Nessun elemento</div>
       ) : (
         <ul style={{ margin: 0, paddingLeft: 18 }}>
-          {items.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{String(it)}</li>)}
+          {items.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{toRenderable(it)}</li>)}
         </ul>
       )}
     </div>
@@ -48,11 +63,11 @@ export default function AdvisorReport({ advisor }) {
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px,1fr))', gap: 12 }}>
           <div>
             <div className="kpi-title">Stato</div>
-            <div className="kpi-value">{a.tone || a.health || '—'}</div>
+            <div className="kpi-value">{toRenderable(a.tone || a.health)}</div>
           </div>
           <div>
             <div className="kpi-title">Rischio</div>
-            <div className="kpi-value">{a.risk ?? '—'}</div>
+            <div className="kpi-value">{toRenderable(a.risk)}</div>
           </div>
         </div>
       </div>
@@ -69,7 +84,7 @@ export default function AdvisorReport({ advisor }) {
         <div className="card" style={{ padding: 16, marginTop: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Rischi & Attenzioni</div>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {a.risks.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{String(it)}</li>)}
+            {a.risks.map((it, idx) => <li key={idx} style={{ marginBottom: 6 }}>{toRenderable(it)}</li>)}
           </ul>
         </div>
       )}
