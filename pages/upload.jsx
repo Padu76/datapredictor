@@ -1,9 +1,14 @@
+// pages\upload.jsx
+import dynamic from 'next/dynamic';
 import { useMemo, useRef, useState } from 'react';
-import SmartUpload from '../components/SmartUpload';
-import DataPreview from '../components/DataPreview';
-import ForecastChart from '../components/ForecastChart';
-import AdvisorReport from '../components/AdvisorReport';
-import AdvisorProPanel from '../components/AdvisorProPanel';
+
+// Importa i componenti con SSR disabilitato per evitare hydration errors
+const SmartUpload = dynamic(() => import('../components/SmartUpload'), { ssr: false });
+const DataPreview = dynamic(() => import('../components/DataPreview'), { ssr: false });
+const ForecastChart = dynamic(() => import('../components/ForecastChart'), { ssr: false });
+const AdvisorReport = dynamic(() => import('../components/AdvisorReport'), { ssr: false });
+const AdvisorProPanel = dynamic(() => import('../components/AdvisorProPanel'), { ssr: false });
+
 import { summarizeStats } from '../lib/stats';
 import { computeForecast } from '../lib/forecast';
 import { exportAnalysisPDF } from '../lib/pdf';
@@ -124,7 +129,7 @@ export default function UploadPage() {
           <div style={{ marginTop: 12 }}>
             <div className="card" style={{ padding: 12 }}>
               <div style={{ fontWeight:700, marginBottom:6 }}>Consulenza PRO (AI)</div>
-              <p className="hero-sub" style={{ marginTop:0 }}>Se vuoi un piano d’azione potenziato, genera l’analisi AI.</p>
+              <p className="hero-sub" style={{ marginTop:0 }}>Se vuoi un piano d'azione potenziato, genera l'analisi AI.</p>
               <AdvisorProPanel rows={rows} target={target} dateCol={dateCol} />
             </div>
           </div>
